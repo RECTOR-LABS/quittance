@@ -24,3 +24,6 @@ coverage/
 .DS_Store
 .idea/
 .vscode/
+
+# SDD scratch (subagent-driven-development ledger + briefs)
+.superpowers/
