@@ -27,6 +27,28 @@ importers:
         specifier: ^3.2.3
         version: 3.2.6(@types/node@24.13.2)
 
+  verifiers:
+    dependencies:
+      '@quittance/core':
+        specifier: workspace:*
+        version: link:../packages/core
+    devDependencies:
+      '@noble/ed25519':
+        specifier: ^2.3.0
+        version: 2.3.0
+      '@noble/hashes':
+        specifier: ^1.8.0
+        version: 1.8.0
+      '@types/node':
+        specifier: ^24.0.0
+        version: 24.13.2
+      typescript:
+        specifier: ^5.8.3
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.3
+        version: 3.2.6(@types/node@24.13.2)
+
 packages:
 
   '@esbuild/aix-ppc64@0.27.7':
