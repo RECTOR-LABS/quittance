@@ -1,0 +1,26 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Builds
+dist/
+.next/
+out/
+target/
+*.wasm
+
+# Env & secrets — never commit
+.env
+.env.*
+!.env.example
+*.pem
+secret_key*
+
+# Test / coverage
+coverage/
+*.log
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
