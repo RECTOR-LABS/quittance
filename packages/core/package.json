@@ -12,8 +12,10 @@
       "types": "./dist/index.d.ts"
     },
     "./test-utils": {
-      "import": "./dist/test-utils.js",
-      "types": "./dist/test-utils.d.ts"
+      "development": {
+        "import": "./dist/test-utils.js",
+        "types": "./dist/test-utils.d.ts"
+      }
     }
   },
   "scripts": {

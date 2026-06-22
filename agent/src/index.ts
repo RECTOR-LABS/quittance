@@ -1,4 +1,4 @@
-// VerifierClient seam + fake
+// VerifierClient seam + types (FakeVerifierClient is test-only — import directly from ./verifier-client)
 export type {
   VerifierEndpoint,
   VerifierResponse,
@@ -6,7 +6,6 @@ export type {
   FakeEndpointConfig,
   FakeVerifierClientOptions,
 } from "./verifier-client.js";
-export { FakeVerifierClient } from "./verifier-client.js";
 
 // Servicer state machine
 export type {

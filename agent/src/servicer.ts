@@ -1,7 +1,7 @@
 import { reachQuorum } from "@quittance/core";
 import type { ChainClient, SettlementReceipt, SignedVerdict } from "@quittance/core";
 import type { VerifyQuery } from "@quittance/verifier";
-import type { VerifierClient, VerifierEndpoint } from "./verifier-client.js";
+import type { VerifierClient, VerifierEndpoint, VerifierResponse } from "./verifier-client.js";
 
 export interface AssetServicingConfig {
   assetId: string;
@@ -29,31 +29,40 @@ export interface CycleOutcome {
   distributeTx?: string;
   receipts: SettlementReceipt[];
   verdicts: SignedVerdict[];
+  /** Errors from verifier queries that threw after retries. Empty on full success. */
+  errors: { endpointId: string; message: string }[];
 }
+
+// Discriminated union so callers get typed access to either the response or the failure info.
+type QueryResult =
+  | { ok: true; response: VerifierResponse }
+  | { ok: false; endpointId: string; message: string };
 
 /**
  * Attempt to query a single verifier endpoint, retrying once on failure.
  *
- * Returns the VerifierResponse on success, or null if both attempts throw.
+ * Returns a discriminated union: { ok: true, response } on success, or
+ * { ok: false, endpointId, message } if both attempts throw.
  * Never throws out of this function.
  */
 async function queryWithRetry(
   client: VerifierClient,
   endpoint: VerifierEndpoint,
   q: VerifyQuery,
-): Promise<import("./verifier-client.js").VerifierResponse | null> {
+): Promise<QueryResult> {
   // First attempt.
   try {
-    return await client.query(endpoint, q);
+    return { ok: true, response: await client.query(endpoint, q) };
   } catch {
     // Retry once on any thrown error.
   }
 
   // Second attempt (single retry).
   try {
-    return await client.query(endpoint, q);
-  } catch {
-    return null;
+    return { ok: true, response: await client.query(endpoint, q) };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return { ok: false, endpointId: endpoint.id, message };
   }
 }
 
@@ -89,6 +98,7 @@ export async function runCycle(
       reason: "already_distributed",
       receipts: [],
       verdicts: [],
+      errors: [],
     };
   }
 
@@ -109,13 +119,16 @@ export async function runCycle(
 
   const receipts: SettlementReceipt[] = [];
   const verdicts: SignedVerdict[] = [];
+  const errors: { endpointId: string; message: string }[] = [];
   let successCount = 0;
 
   for (const result of results) {
-    if (result !== null) {
+    if (result.ok) {
       successCount++;
-      receipts.push(result.receipt);
-      verdicts.push(result.verdict);
+      receipts.push(result.response.receipt);
+      verdicts.push(result.response.verdict);
+    } else {
+      errors.push({ endpointId: result.endpointId, message: result.message });
     }
   }
 
@@ -130,6 +143,7 @@ export async function runCycle(
       reason: allFailed ? "payment_failed" : "insufficient_responses",
       receipts,
       verdicts,
+      errors,
     };
   }
 
@@ -144,6 +158,7 @@ export async function runCycle(
       reason: "quorum_not_met",
       receipts,
       verdicts,
+      errors,
     };
   }
 
@@ -166,5 +181,6 @@ export async function runCycle(
     distributeTx: deployResult.txHash,
     receipts,
     verdicts,
+    errors,
   };
 }

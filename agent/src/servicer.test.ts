@@ -41,7 +41,8 @@ const BASE_CFG: AssetServicingConfig = {
 
 function makeSignedVerdict(
   verdict: "yes" | "no",
-  keyIndex: number,
+  // verifierIndex is a logical label only — a fresh random key is generated each call.
+  verifierIndex: number,
   opts: { assetId?: string; cycleId?: string } = {},
 ): SignedVerdict {
   const kp = freshKeypair();
@@ -50,7 +51,7 @@ function makeSignedVerdict(
     cycleId: opts.cycleId ?? CYCLE_ID,
     verdict,
     observedAmount: "10000000000",
-    source: `verifier-${keyIndex}`,
+    source: `verifier-${verifierIndex}`,
   };
   return signVerdict(v, kp.secretKeyHex);
 }
@@ -275,6 +276,20 @@ describe("runCycle — all payments fail → payment_failed", () => {
     // 3 endpoints × 2 attempts each = 6 total invocations
     expect(verifier.invocations).toHaveLength(6);
   });
+
+  it("outcome.errors contains one entry per failed endpoint with endpointId and message", async () => {
+    const outcome = await runCycle({ verifierClient: verifier, chainClient: chain }, BASE_CFG, CYCLE_ID);
+    // 3 endpoints all failed — each should appear in errors with a message.
+    expect(outcome.errors).toHaveLength(3);
+    const ids = outcome.errors.map((e) => e.endpointId);
+    expect(ids).toContain("v1");
+    expect(ids).toContain("v2");
+    expect(ids).toContain("v3");
+    for (const e of outcome.errors) {
+      expect(typeof e.message).toBe("string");
+      expect(e.message.length).toBeGreaterThan(0);
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -339,9 +354,10 @@ describe("runCycle — retry behaviour (throws once, succeeds on retry)", () => 
       ): Promise<VerifierResponse> {
         if (endpoint.id === "v2") {
           v2CallCount++;
-          if (v2CallCount === 1) throw new Error("transient network error");
-          // Second call succeeds — record the invocation manually.
+          // Record every attempt (including the one that throws) for consistency
+          // with FakeVerifierClient which pushes before resolving/rejecting.
           this.invocations.push({ endpoint, query: q });
+          if (v2CallCount === 1) throw new Error("transient network error");
           return v2Response;
         }
         return super.query(endpoint, q);
