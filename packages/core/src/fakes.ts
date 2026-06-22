@@ -22,13 +22,24 @@ export interface FakePaymentClientOptions {
  *
  * Contracts honoured:
  * - Idempotent on (cycleId, verifierId): a second pay() for the same pair
- *   returns the cached receipt without incrementing the call count.
+ *   returns the cached receipt without re-settling (mirrors real x402 behaviour).
  * - Forced-error fires only for new (unsettled) pairs — a retry of an already-
- *   settled pair still returns the cached receipt (mirrors real x402 behaviour).
+ *   settled pair still returns the cached receipt even when forcedError is set.
+ *
+ * Introspection properties (unambiguous):
+ * - `invocations` — appended on EVERY pay() call, including cache hits.
+ *   Use to assert total call count (e.g. retry + idempotency tests).
+ * - `settlements` — appended only on cache-miss (new) settlements.
+ *   Use to assert how many unique pairs were actually paid out.
+ *
+ * Example: two pay() calls for the same (cycleId, verifierId) produce
+ *   invocations.length === 2, settlements.length === 1.
  */
 export class FakePaymentClient implements PaymentClient {
-  /** Requests that resulted in a new settlement (deduped). */
-  readonly calls: PaymentRequest[] = [];
+  /** Every pay() invocation, including cache hits. */
+  readonly invocations: PaymentRequest[] = [];
+  /** Only requests that resulted in a new settlement (cache-miss). */
+  readonly settlements: SettlementReceipt[] = [];
 
   private readonly settled = new Map<string, SettlementReceipt>();
   private readonly forcedError: Error | undefined;
@@ -40,6 +51,9 @@ export class FakePaymentClient implements PaymentClient {
   }
 
   async pay(req: PaymentRequest): Promise<SettlementReceipt> {
+    // Record every invocation regardless of outcome.
+    this.invocations.push(req);
+
     const key = `${req.cycleId}:${req.verifierId}`;
 
     // Idempotency: return cached receipt without re-settling.
@@ -53,8 +67,6 @@ export class FakePaymentClient implements PaymentClient {
       throw this.forcedError;
     }
 
-    this.calls.push(req);
-
     const receipt: SettlementReceipt = {
       verifierId: req.verifierId,
       cycleId: req.cycleId,
@@ -64,12 +76,14 @@ export class FakePaymentClient implements PaymentClient {
     };
 
     this.settled.set(key, receipt);
+    this.settlements.push(receipt);
     return receipt;
   }
 
-  /** Reset recorded calls and idempotency cache. Useful between test cases. */
+  /** Reset all recorded state and idempotency cache. Useful between test cases. */
   reset(): void {
-    this.calls.length = 0;
+    this.invocations.length = 0;
+    this.settlements.length = 0;
     this.settled.clear();
   }
 }

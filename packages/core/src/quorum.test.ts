@@ -1,27 +1,9 @@
 import { describe, it, expect } from "vitest";
-import * as ed from "@noble/ed25519";
-import { bytesToHex } from "@noble/hashes/utils";
 import { signVerdict } from "./sign.js";
 import { reachQuorum } from "./quorum.js";
+import { freshKeypair } from "./test-utils.js";
+import type { Keypair } from "./test-utils.js";
 import type { Verdict, SignedVerdict } from "./types.js";
-
-// ---------------------------------------------------------------------------
-// Test helpers
-// ---------------------------------------------------------------------------
-
-interface Keypair {
-  secretKeyHex: string;
-  publicKeyHex: string;
-}
-
-function freshKeypair(): Keypair {
-  const secretKey = ed.utils.randomPrivateKey();
-  const publicKey = ed.getPublicKey(secretKey);
-  return {
-    secretKeyHex: bytesToHex(secretKey),
-    publicKeyHex: bytesToHex(publicKey),
-  };
-}
 
 function makeVerdict(
   verdict: "yes" | "no",

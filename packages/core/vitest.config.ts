@@ -8,7 +8,9 @@ export default defineConfig({
       provider: "v8",
       reporter: ["text", "lcov"],
       include: ["src/**/*.ts"],
-      exclude: ["src/**/*.test.ts", "src/fakes.ts"],
+      // fakes.ts is test-support code — it contains no production logic and is
+      // exercised by downstream task tests (agent, e2e), not by unit tests here.
+      exclude: ["src/**/*.test.ts", "src/test-utils.ts", "src/fakes.ts"],
     },
   },
 });

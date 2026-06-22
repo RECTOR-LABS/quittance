@@ -10,16 +10,41 @@ ed.etc.sha512Sync = (...messages: Uint8Array[]) =>
   sha512(ed.etc.concatBytes(...messages));
 
 /**
+ * Compile-time exhaustiveness guard: asserts that T is exactly never, meaning
+ * every member of the union has been handled. If Verdict gains a field and
+ * VERDICT_KEY_ORDER is not updated, the `Exclude` below will be non-never and
+ * tsc will emit an error pointing here.
+ *
+ * Usage: type _Check = ExhaustiveKeyList<Verdict, typeof VERDICT_KEY_ORDER[number]>
+ */
+type ExhaustiveKeyList<TObj, TListed extends keyof TObj> =
+  [Exclude<keyof TObj, TListed>] extends [never]
+    ? true
+    : ["Missing keys in VERDICT_KEY_ORDER: ", Exclude<keyof TObj, TListed>];
+
+/**
  * Fixed canonical key order for Verdict JSON serialisation.
  * Stable across runtimes regardless of object construction order.
+ *
+ * IMPORTANT: this list MUST contain every key in `Verdict`. The compile-time
+ * guard below (`_VerdictKeyOrderExhaustive`) turns any missing key into a tsc
+ * error, preventing silent omission from the signed hash.
  */
-const VERDICT_KEY_ORDER: ReadonlyArray<keyof Verdict> = [
+const VERDICT_KEY_ORDER = [
   "assetId",
   "cycleId",
   "verdict",
   "observedAmount",
   "source",
-] as const;
+] as const satisfies ReadonlyArray<keyof Verdict>;
+
+// If Verdict gains a new field that is absent from VERDICT_KEY_ORDER, tsc
+// will fail here with: Type '["Missing keys in VERDICT_KEY_ORDER: ", "<field>"]'
+// is not assignable to type 'true'.
+type _VerdictKeyOrderExhaustive = ExhaustiveKeyList<
+  Verdict,
+  (typeof VERDICT_KEY_ORDER)[number]
+>;
 
 /**
  * Produces a deterministic 32-byte SHA-256 hash over the canonical JSON of

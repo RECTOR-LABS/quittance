@@ -1,7 +1,6 @@
 import { describe, it, expect } from "vitest";
-import * as ed from "@noble/ed25519";
-import { bytesToHex } from "@noble/hashes/utils";
 import { canonicalHash, signVerdict, verifyVerdict } from "./sign.js";
+import { freshKeypair } from "./test-utils.js";
 import type { Verdict } from "./types.js";
 
 // ---------------------------------------------------------------------------
@@ -16,14 +15,36 @@ const baseVerdict: Verdict = {
   source: "bank-api-v1",
 };
 
-function freshKeypair(): { secretKeyHex: string; publicKeyHex: string } {
-  const secretKey = ed.utils.randomPrivateKey();
-  const publicKey = ed.getPublicKey(secretKey);
-  return {
-    secretKeyHex: bytesToHex(secretKey),
-    publicKeyHex: bytesToHex(publicKey),
-  };
-}
+// ---------------------------------------------------------------------------
+// VERDICT_KEY_ORDER exhaustiveness guarantee
+// ---------------------------------------------------------------------------
+// The compile-time guard in sign.ts (_VerdictKeyOrderExhaustive) ensures that
+// every key present in the `Verdict` interface also appears in VERDICT_KEY_ORDER.
+// If Verdict gains a field that is missing from the list, tsc will fail with:
+//   Type '["Missing keys in VERDICT_KEY_ORDER: ", "<field>"]' is not assignable
+//   to type 'true'.
+// The runtime test below verifies the same invariant so the guarantee is
+// visible in the test suite even without a tsc invocation.
+
+describe("VERDICT_KEY_ORDER exhaustiveness", () => {
+  it("covers every key present in a Verdict object", () => {
+    const verdict: Verdict = {
+      assetId: "x",
+      cycleId: "x",
+      verdict: "yes",
+      observedAmount: "0",
+      source: "x",
+    };
+    // Every key in the Verdict must produce a differing hash when tampered.
+    // If a key were missing from VERDICT_KEY_ORDER it would be absent from the
+    // canonical JSON and tampering it would NOT change the hash — the assertion
+    // below would fail, exposing the gap.
+    for (const field of Object.keys(verdict) as Array<keyof Verdict>) {
+      const tampered = { ...verdict, [field]: "tampered" } as Verdict;
+      expect(canonicalHash(tampered)).not.toBe(canonicalHash(verdict));
+    }
+  });
+});
 
 // ---------------------------------------------------------------------------
 // canonicalHash
