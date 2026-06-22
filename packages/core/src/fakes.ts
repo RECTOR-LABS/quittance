@@ -1,0 +1,174 @@
+import type { ChainClient, DeployResult } from "./chain-client.js";
+import type { PaymentClient, PaymentRequest, SettlementReceipt } from "./payment-client.js";
+
+// ---------------------------------------------------------------------------
+// FakePaymentClient
+// ---------------------------------------------------------------------------
+
+export interface FakePaymentClientOptions {
+  /**
+   * If provided, every pay() call throws this error (after idempotency check).
+   * Simulate a payment-rail failure or facilitator quota exhaustion.
+   */
+  forcedError?: Error;
+  /**
+   * amountMotes returned in generated receipts. Default: "1000000".
+   */
+  defaultAmountMotes?: string;
+}
+
+/**
+ * In-memory PaymentClient for downstream tests (agent, e2e).
+ *
+ * Contracts honoured:
+ * - Idempotent on (cycleId, verifierId): a second pay() for the same pair
+ *   returns the cached receipt without incrementing the call count.
+ * - Forced-error fires only for new (unsettled) pairs — a retry of an already-
+ *   settled pair still returns the cached receipt (mirrors real x402 behaviour).
+ */
+export class FakePaymentClient implements PaymentClient {
+  /** Requests that resulted in a new settlement (deduped). */
+  readonly calls: PaymentRequest[] = [];
+
+  private readonly settled = new Map<string, SettlementReceipt>();
+  private readonly forcedError: Error | undefined;
+  private readonly defaultAmountMotes: string;
+
+  constructor(options: FakePaymentClientOptions = {}) {
+    this.forcedError = options.forcedError;
+    this.defaultAmountMotes = options.defaultAmountMotes ?? "1000000";
+  }
+
+  async pay(req: PaymentRequest): Promise<SettlementReceipt> {
+    const key = `${req.cycleId}:${req.verifierId}`;
+
+    // Idempotency: return cached receipt without re-settling.
+    const cached = this.settled.get(key);
+    if (cached !== undefined) {
+      return cached;
+    }
+
+    // Simulate payment-rail failure for unsettled pairs.
+    if (this.forcedError !== undefined) {
+      throw this.forcedError;
+    }
+
+    this.calls.push(req);
+
+    const receipt: SettlementReceipt = {
+      verifierId: req.verifierId,
+      cycleId: req.cycleId,
+      txHash: `fake-tx-${key}`,
+      amountMotes: this.defaultAmountMotes,
+      settledAt: new Date().toISOString(),
+    };
+
+    this.settled.set(key, receipt);
+    return receipt;
+  }
+
+  /** Reset recorded calls and idempotency cache. Useful between test cases. */
+  reset(): void {
+    this.calls.length = 0;
+    this.settled.clear();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// FakeChainClient
+// ---------------------------------------------------------------------------
+
+export interface FakeChainClientCall {
+  method: "installContract" | "callEntrypoint" | "queryDictItem" | "waitForFinality";
+  args: unknown[];
+}
+
+export interface FakeChainClientOptions {
+  /**
+   * Prepopulated dict entries: `${contractHash}:${dict}:${key}` → value.
+   * Use setDictItem() after construction to add entries dynamically.
+   */
+  dictItems?: Map<string, unknown>;
+  /** Finality outcome returned by waitForFinality. Default: "success". */
+  finality?: "success" | "failure";
+  /** Seed for auto-incrementing tx hash counter. Default: 0. */
+  txCounter?: number;
+}
+
+/**
+ * In-memory ChainClient for downstream tests (agent, e2e).
+ *
+ * Contracts honoured:
+ * - Records every call with method name + arguments for assertion.
+ * - Returns deterministic txHashes (label-N) so tests can match on them.
+ * - queryDictItem is configurable to simulate distributed flags, pool states, etc.
+ *   A key not present in the dict returns undefined (not an error).
+ */
+export class FakeChainClient implements ChainClient {
+  readonly calls: FakeChainClientCall[] = [];
+
+  private counter: number;
+  private readonly dictItems: Map<string, unknown>;
+  private readonly finality: "success" | "failure";
+
+  constructor(options: FakeChainClientOptions = {}) {
+    this.counter = options.txCounter ?? 0;
+    this.dictItems = options.dictItems ?? new Map<string, unknown>();
+    this.finality = options.finality ?? "success";
+  }
+
+  async installContract(
+    wasmPath: string,
+    args: Record<string, unknown>,
+  ): Promise<DeployResult> {
+    this.calls.push({ method: "installContract", args: [wasmPath, args] });
+    return { txHash: this.nextTxHash("install") };
+  }
+
+  async callEntrypoint(
+    contractHash: string,
+    entry: string,
+    args: Record<string, unknown>,
+  ): Promise<DeployResult> {
+    this.calls.push({ method: "callEntrypoint", args: [contractHash, entry, args] });
+    return { txHash: this.nextTxHash(entry) };
+  }
+
+  async queryDictItem(
+    contractHash: string,
+    dict: string,
+    key: string,
+  ): Promise<unknown> {
+    this.calls.push({ method: "queryDictItem", args: [contractHash, dict, key] });
+    return this.dictItems.get(`${contractHash}:${dict}:${key}`);
+  }
+
+  async waitForFinality(txHash: string): Promise<"success" | "failure"> {
+    this.calls.push({ method: "waitForFinality", args: [txHash] });
+    return this.finality;
+  }
+
+  /**
+   * Pre-populate a dict entry so queryDictItem returns a known value.
+   *
+   * Example — simulate an already-distributed cycle so the agent halts:
+   *   chain.setDictItem(contractHash, "distributed", "inv-1:2026-06", true);
+   */
+  setDictItem(
+    contractHash: string,
+    dict: string,
+    key: string,
+    value: unknown,
+  ): void {
+    this.dictItems.set(`${contractHash}:${dict}:${key}`, value);
+  }
+
+  /** Reset recorded calls. Dict entries and finality config are preserved. */
+  reset(): void {
+    this.calls.length = 0;
+  }
+
+  private nextTxHash(label: string): string {
+    return `fake-tx-${label}-${++this.counter}`;
+  }
+}

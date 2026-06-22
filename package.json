@@ -1,0 +1,16 @@
+{
+  "name": "quittance",
+  "private": true,
+  "version": "0.0.1",
+  "description": "Verification-gated autonomous servicing for tokenized real-world cashflows on Casper.",
+  "type": "module",
+  "scripts": {
+    "test": "pnpm --recursive test",
+    "build": "pnpm --recursive build"
+  },
+  "engines": {
+    "node": ">=20",
+    "pnpm": ">=9"
+  },
+  "packageManager": "pnpm@10.33.2"
+}
