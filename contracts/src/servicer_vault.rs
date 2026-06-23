@@ -25,13 +25,22 @@ pub struct AssetConfig {
     pub quorum: u8,
 }
 
-/// Emitted on a successful distribution. `total` is the amount actually paid
-/// out (pool minus integer-division dust).
+/// Emitted on a successful distribution — the auditable on-chain record of the
+/// settlement. `total` is the amount actually paid out (pool minus
+/// integer-division dust). `signers` and `verdict_hashes` carry the quorum
+/// provenance so anyone reading the log can re-check that the gate was met:
+/// `signers` is the set of distinct, registered verifiers that satisfied the
+/// quorum, and `verdict_hashes` is the verdict-hash digests presented for the
+/// cycle.
 #[odra::event]
 pub struct Distributed {
     pub asset_id: String,
     pub cycle_id: String,
     pub total: U512,
+    /// Distinct registered verifiers whose presence satisfied the quorum gate.
+    pub signers: Vec<PublicKey>,
+    /// Verdict-hash digests presented for this cycle (provenance, as supplied).
+    pub verdict_hashes: Vec<[u8; 32]>,
 }
 
 /// Reverts surfaced by [`ServicerVault`]. Discriminants are stable on-chain
@@ -52,6 +61,9 @@ pub enum Error {
     QuorumNotMet = 6,
     /// The pool for this asset is empty (nothing funded for the cycle).
     InsufficientPool = 7,
+    /// `register_asset` called with a non-empty holder list whose weights sum
+    /// to zero (no holder can ever receive a share).
+    ZeroTotalWeight = 8,
 }
 
 #[odra::module(errors = Error, events = [Distributed])]
@@ -73,6 +85,7 @@ impl ServicerVault {
     /// Register an asset and its distribution rules.
     ///
     /// Reverts [`Error::AssetAlreadyExists`], [`Error::EmptyHolders`],
+    /// [`Error::ZeroTotalWeight`] (holders present but weights sum to zero),
     /// [`Error::InvalidQuorum`] (`quorum == 0` or `quorum > verifiers.len()`).
     pub fn register_asset(
         &mut self,
@@ -87,6 +100,16 @@ impl ServicerVault {
         }
         if holders.is_empty() {
             self.env().revert(Error::EmptyHolders);
+        }
+        // Reject an all-zero-weight registry up front: a non-empty holder list
+        // whose weights sum to zero can never distribute (every pro-rata share
+        // would be `pool * 0 / 0`). Failing fast here makes the divide-by-zero
+        // path in `distribute` unreachable by construction.
+        let total_weight = holders
+            .iter()
+            .fold(U256::zero(), |acc, (_, weight)| acc + *weight);
+        if total_weight.is_zero() {
+            self.env().revert(Error::ZeroTotalWeight);
         }
         if quorum == 0 || quorum as usize > verifiers.len() {
             self.env().revert(Error::InvalidQuorum);
@@ -130,7 +153,9 @@ impl ServicerVault {
 
     /// Release the pool to holders pro-rata, once per `(asset_id, cycle_id)`.
     ///
-    /// `verdict_hashes` is provenance only (echoed in the event); it does
+    /// The quorum proof — the distinct registered signer set that satisfied the
+    /// gate and the `verdict_hashes` digests — is recorded in the emitted
+    /// [`Distributed`] event. `verdict_hashes` is provenance only; it does
     /// **not** gate distribution. See the TRUST BOUNDARY note in the body.
     pub fn distribute(
         &mut self,
@@ -161,12 +186,16 @@ impl ServicerVault {
         // off-chain in the agent's `reachQuorum`. `verdict_hashes` is recorded
         // for provenance only and does not gate distribution. On-chain
         // signature verification is a Final-Round enhancement.
-        let mut distinct_registered: Vec<&PublicKey> = Vec::new();
+        //
+        // `distinct_registered` is the deduped, registered signer set that the
+        // gate accepted — captured (owned) so it can be recorded in the
+        // `Distributed` event as the on-chain quorum proof.
+        let mut distinct_registered: Vec<PublicKey> = Vec::new();
         for signer in signers.iter() {
             let registered = cfg.verifiers.contains(signer);
-            let already_counted = distinct_registered.contains(&signer);
+            let already_counted = distinct_registered.contains(signer);
             if registered && !already_counted {
-                distinct_registered.push(signer);
+                distinct_registered.push(signer.clone());
             }
         }
         if distinct_registered.len() < cfg.quorum as usize {
@@ -184,11 +213,13 @@ impl ServicerVault {
             .holders
             .iter()
             .fold(U512::zero(), |acc, (_, weight)| acc + to_u512(weight));
-        // `total_weight` is non-zero: holders is non-empty (enforced at
-        // registration) and weights are summed as presented. A zero total would
-        // mean all-zero weights; guard against the division anyway.
+        // `total_weight` is non-zero by construction: `register_asset` rejects a
+        // zero-sum holder list with `ZeroTotalWeight`, so any stored config has
+        // a positive total. This guard is defense-in-depth and is unreachable;
+        // it reverts the correctly-labeled error rather than the misleading
+        // `EmptyHolders`.
         if total_weight.is_zero() {
-            self.env().revert(Error::EmptyHolders);
+            self.env().revert(Error::ZeroTotalWeight);
         }
 
         let mut paid = U512::zero();
@@ -210,13 +241,16 @@ impl ServicerVault {
         // 7. Mark this cycle settled.
         self.distributed.set(&key, true);
 
-        // 8. Emit the auditable receipt (verdict provenance recorded off-event
-        //    in the agent; the event carries the settled totals).
-        let _ = verdict_hashes;
+        // 8. Emit the auditable record: settled totals plus the quorum proof —
+        //    the distinct registered signer set that satisfied the gate and the
+        //    verdict-hash digests presented — so anyone reading the log can
+        //    re-check that >=2 independent signers attested before funds moved.
         self.env().emit_event(Distributed {
             asset_id,
             cycle_id,
             total: paid,
+            signers: distinct_registered,
+            verdict_hashes,
         });
     }
 }
@@ -345,6 +379,26 @@ mod tests {
         assert_revert(res, Error::InvalidQuorum);
     }
 
+    // 3b. register rejects non-empty holders whose weights all sum to zero
+    #[test]
+    fn register_rejects_zero_total_weight() {
+        let env = odra_test::env();
+        let token = env.get_account(0);
+        let alice = env.get_account(1);
+        let bob = env.get_account(2);
+        let mut vault = ServicerVault::deploy(&env, NoArgs);
+
+        // Non-empty holders, but every weight is zero -> no distributable share.
+        let res = vault.try_register_asset(
+            "inv-1".to_string(),
+            token,
+            vec![(alice, U256::zero()), (bob, U256::zero())],
+            vec![vk(1), vk(2), vk(3)],
+            2,
+        );
+        assert_revert(res, Error::ZeroTotalWeight);
+    }
+
     // 4. register rejects duplicate asset_id
     #[test]
     fn register_rejects_duplicate_asset_id() {
@@ -437,6 +491,10 @@ mod tests {
         assert_eq!(event.asset_id, "inv-1");
         assert_eq!(event.cycle_id, "c1");
         assert_eq!(event.total, U512::from(1000));
+        // Quorum proof recorded on-chain: the distinct registered signers that
+        // satisfied the gate, and the exact verdict hashes presented.
+        assert_eq!(event.signers, vec![vk(1), vk(2)]);
+        assert_eq!(event.verdict_hashes, vec![hash(0xAA), hash(0xBB)]);
     }
 
     // 7. distribute fraud / under-quorum
@@ -647,7 +705,7 @@ mod tests {
         vault.distribute(
             "inv-1".to_string(),
             "c1".to_string(),
-            vec![hash(0xAA), hash(0xBB)],
+            vec![hash(0xCC), hash(0xDD)],
             vec![vk(1), vk(2)],
         );
 
@@ -659,5 +717,8 @@ mod tests {
 
         let event: Distributed = env.get_event(&vault, 0).expect("Distributed event");
         assert_eq!(event.total, U512::from(999));
+        // Quorum proof recorded even when dust is carried.
+        assert_eq!(event.signers, vec![vk(1), vk(2)]);
+        assert_eq!(event.verdict_hashes, vec![hash(0xCC), hash(0xDD)]);
     }
 }

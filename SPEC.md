@@ -56,7 +56,7 @@ Four components, TypeScript-first (Odra kept minimal — the feasibility read sh
 2. **Verify** — agent calls the 3 verifier endpoints; each returns `402`, agent signs an EIP-712 `transfer_with_authorization` and replays with the `PAYMENT-SIGNATURE` header; the sponsored facilitator settles one real tx per call on `casper-test`.
 3. **Quorum** — agent collects the signed verdicts. **≥2 of 3 "yes"** → proceed. Otherwise → **halt, flag dispute, no payout.**
 4. **Distribute** — agent calls `ServicerVault.distribute(cycle_id)`; the contract pays holders pro-rata and emits a `Distributed` event.
-5. **Receipt** — agent writes the cycle receipt (verifier set, verdicts, amounts, tx hashes) to the vault's receipt log; holder view renders it.
+5. **Receipt** — `distribute` emits the cycle's `Distributed` event carrying the quorum proof (the registered signer set + verdict-hash digests) and the settled total; the holder view renders the receipt from the event log.
 
 ## 7. Smart contracts (Casper / Odra)
 
@@ -64,6 +64,7 @@ Four components, TypeScript-first (Odra kept minimal — the feasibility read sh
 - **Storage:** `Mapping<AssetId, AssetConfig>` (token, schedule, holder split, verifier set), `Mapping<(AssetId, CycleId), Receipt>` (verdicts, amounts, status), `Var<Balance>` distribution pool per asset.
 - **Entrypoints:** `register_asset`, `fund`, `distribute(asset_id, cycle_id, quorum_proof)` (guarded: only the configured servicer key; rejects a cycle already distributed — idempotent), `get_receipt` (read-only).
 - **Events:** `AssetRegistered`, `Funded`, `Distributed`, `DisputeFlagged` (Casper Event Standard, streamed via CSPR.cloud).
+- **Qualifier scope:** the per-cycle receipt is realized as the `Distributed` event (registered signer set, verdict-hash digests, settled total) — the auditable record the holder view streams via CSPR.cloud. A queryable `Mapping<(AssetId, CycleId), Receipt>` + `get_receipt` read entrypoint is a Final-Round enhancement; the qualifier `ServicerVault` ships `register_asset`, `fund`, `get_asset`, `pool_of`, and `distribute`.
 - **Payout token:** reuse a CEP-18 (the `casper-x402` repo's deployer or WCSPR); only deploy a custom CEP-18 if needed.
 
 Security posture: servicer-key gating on all mutating entrypoints; idempotent distribution keyed by `(asset_id, cycle_id)`; no upgradeable admin backdoor in the demo; all inputs range-checked.
@@ -72,7 +73,7 @@ Security posture: servicer-key gating on all mutating entrypoints; idempotent di
 
 - Each verifier exposes `GET /verify?asset=…&cycle=…` behind x402.
 - The agent pays each independently — these are **separate on-chain settlements**, demonstrating real recursive machine-to-machine commerce.
-- Quorum is computed off-chain by the agent; the **quorum proof** (the 3 signed verdicts) is passed to `distribute()` and stored in the receipt so anyone can re-check that ≥2 independent signers attested before funds moved.
+- Quorum is computed off-chain by the agent; the **quorum proof** (the registered signer set + the verdict-hash digests) is passed to `distribute()` and recorded on-chain in the `Distributed` event so anyone reading the log can re-check that ≥2 independent signers attested before funds moved.
 - Anti-double-pay: each x402 settlement is idempotent on `(cycle, verifier)`; a confirmed settlement is never re-sent.
 
 ## 9. x402 integration (the critical path)
