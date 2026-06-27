@@ -396,12 +396,34 @@ export class CasperJsChainClient implements ChainClient {
  * layer), so a real "connection reset" is never silently swallowed as absent.
  */
 function isDictionaryNotFound(error: unknown): boolean {
-  const code = (error as { code?: unknown })?.code;
+  const e = error as {
+    code?: unknown;
+    statusCode?: unknown;
+    sourceErr?: { code?: unknown; data?: unknown };
+    message?: unknown;
+  };
+  // casper-js-sdk surfaces the RPC code at different depths depending on the
+  // transport wrapper: top-level `code`, `statusCode`, or nested `sourceErr.code`.
+  const code = [e?.code, e?.statusCode, e?.sourceErr?.code].find(
+    (c): c is number => typeof c === "number",
+  );
+  // The node's specific reason lives in `sourceErr.data`; the message is generic.
+  const detail = `${typeof e?.sourceErr?.data === "string" ? e.sourceErr.data : ""} ${
+    error instanceof Error ? error.message : String(error)
+  }`;
+  const looksNotFound = /not[\s_-]?found|does not exist|dictionary item|valuenotfound/i.test(detail);
+
   if (typeof code === "number") {
-    return DICT_ABSENT_RPC_CODES.has(code);
+    if (DICT_ABSENT_RPC_CODES.has(code)) return true;
+    // -32018 NodeRequestFailed wraps multiple faults; treat as "absent" ONLY when
+    // the node's detail explicitly says the dictionary/URef was not found, so a
+    // genuine transport fault still surfaces (never silently skip the
+    // already-distributed idempotency guard → never risk a double distribute).
+    if (code === ErrorCode.NodeRequestFailed) return looksNotFound;
+    return false;
   }
-  const message = error instanceof Error ? error.message : String(error);
-  return /not[\s_-]?found|does not exist|dictionary item|valuenotfound/i.test(message);
+  // No numeric code (e.g. a test mock or a bare transport error): fall back to text.
+  return looksNotFound;
 }
 
 function delay(ms: number): Promise<void> {
