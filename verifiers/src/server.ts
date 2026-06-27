@@ -16,6 +16,8 @@ import type {
   HTTPProcessResult,
   HTTPRequestContext,
   HTTPResponseInstructions,
+  HTTPTransportContext,
+  ProcessSettleResultResponse,
   RoutesConfig,
 } from "@x402/core/server";
 import type { Network } from "@x402/core/types";
@@ -57,6 +59,12 @@ export interface VerifierPaymentConfig {
   tokenVersion: string;
   /** Reference the observed cashflow must carry to qualify (passed to runVerifier). */
   expectedReference: string;
+  /**
+   * Validity window of the payment authorization, in seconds. Set explicitly on
+   * the wire PaymentRequirements rather than relying on the SDK's request-time
+   * default. Defaults to {@link DEFAULT_MAX_TIMEOUT_SECONDS} when omitted.
+   */
+  maxTimeoutSeconds?: number;
   /** Optional canonical resource URL advertised in the 402 PaymentRequired. */
   resourceUrl?: string;
 }
@@ -74,7 +82,26 @@ export interface CreateVerifierAppOptions {
 
 const VERIFY_ROUTE = "/verify";
 
+/** Default payment-authorization validity window (seconds). */
+const DEFAULT_MAX_TIMEOUT_SECONDS = 300;
+
 type PaymentVerified = Extract<HTTPProcessResult, { type: "payment-verified" }>;
+
+/**
+ * The subset of `x402HTTPResourceServer` the Express gate depends on. Extracted
+ * as a seam so the deferred-settlement binding can be unit-tested offline with a
+ * fake gateway; the real `x402HTTPResourceServer` satisfies it structurally.
+ */
+export interface X402Gateway {
+  initialize(): Promise<void>;
+  processHTTPRequest(context: HTTPRequestContext): Promise<HTTPProcessResult>;
+  processSettlement(
+    paymentPayload: PaymentVerified["paymentPayload"],
+    requirements: PaymentVerified["paymentRequirements"],
+    declaredExtensions?: PaymentVerified["declaredExtensions"],
+    transportContext?: HTTPTransportContext,
+  ): Promise<ProcessSettleResultResponse>;
+}
 
 /**
  * Build the Express app exposing `GET /verify?asset=<id>&cycle=<id>`. The route
@@ -195,6 +222,9 @@ function buildCasperX402Gate(
         payTo: payment.payTo,
         // AssetAmount price carries BOTH the WCSPR asset and the exact motes.
         price: { asset: payment.asset, amount: payment.priceMotes },
+        // Set explicitly so the validity window is part of the wire
+        // requirements rather than an SDK default applied at request time.
+        maxTimeoutSeconds: payment.maxTimeoutSeconds ?? DEFAULT_MAX_TIMEOUT_SECONDS,
         // MUST equal the WCSPR EIP-712 domain or settlement fails
         // `invalid_signature`; merged into the wire PaymentRequirements.extra.
         extra: { name: payment.tokenName, version: payment.tokenVersion },
@@ -206,11 +236,20 @@ function buildCasperX402Gate(
   };
 
   const httpServer = new x402HTTPResourceServer(resourceServer, routes);
+  return buildX402GateMiddleware(httpServer);
+}
 
+/**
+ * Wrap an {@link X402Gateway} as an Express middleware: lazily initialize it on
+ * the first request (the facilitator `GET /supported` call), then run the
+ * verify -> handler -> settle binding. Exposed so the binding can be exercised
+ * offline with a fake gateway.
+ */
+export function buildX402GateMiddleware(gateway: X402Gateway): RequestHandler {
   let initPromise: Promise<void> | null = null;
   const ensureInitialized = (): Promise<void> => {
     if (initPromise === null) {
-      initPromise = httpServer.initialize().catch((err: unknown) => {
+      initPromise = gateway.initialize().catch((err: unknown) => {
         initPromise = null; // let a later request retry initialization
         throw err;
       });
@@ -219,12 +258,12 @@ function buildCasperX402Gate(
   };
 
   return (req, res, next) => {
-    runCasperX402Gate(httpServer, ensureInitialized, req, res, next).catch(next);
+    runCasperX402Gate(gateway, ensureInitialized, req, res, next).catch(next);
   };
 }
 
 async function runCasperX402Gate(
-  httpServer: x402HTTPResourceServer,
+  gateway: X402Gateway,
   ensureInitialized: () => Promise<void>,
   req: Request,
   res: Response,
@@ -239,7 +278,7 @@ async function runCasperX402Gate(
     method: req.method,
   };
 
-  const result = await httpServer.processHTTPRequest(context);
+  const result = await gateway.processHTTPRequest(context);
 
   switch (result.type) {
     case "no-payment-required":
@@ -250,21 +289,32 @@ async function runCasperX402Gate(
       return;
     case "payment-verified":
       // Payment verified; settle only after the handler succeeds.
-      installSettlementInterceptor(httpServer, context, result, res, next);
+      installSettlementInterceptor(gateway, context, result, res, next);
       next();
       return;
+    default: {
+      // Exhaustiveness guard: a new HTTPProcessResult variant must be handled
+      // explicitly rather than silently leaving the request hanging.
+      const exhaustive: never = result;
+      throw new Error(
+        `unhandled x402 process result: ${JSON.stringify(exhaustive)}`,
+      );
+    }
   }
 }
 
 /**
  * Defer settlement until the handler writes its response. We patch `res.json`
- * (the handler's response method) so that, on a successful (2xx) verdict, the
- * payment is settled and the PAYMENT-RESPONSE header is attached BEFORE the body
- * is flushed. A non-2xx response (e.g. a 400 validation error) is flushed
- * without settling — the agent is never charged for a request we refused.
+ * ONLY — the verdict handler always responds via `res.json`, and that is the
+ * single sink we intercept; a handler that wrote via `res.send`/`res.end`
+ * instead would bypass settlement (it would never run). On a successful (2xx)
+ * verdict the payment is settled and the PAYMENT-RESPONSE header is attached
+ * BEFORE the body is flushed. A non-2xx response (e.g. a 400 validation error)
+ * is flushed without settling — the agent is never charged for a request we
+ * refused.
  */
 function installSettlementInterceptor(
-  httpServer: x402HTTPResourceServer,
+  gateway: X402Gateway,
   context: HTTPRequestContext,
   verified: PaymentVerified,
   res: Response,
@@ -280,13 +330,13 @@ function installSettlementInterceptor(
       return originalJson(body);
     }
 
-    void settleThenFlush(httpServer, context, verified, res, originalJson, body, next);
+    void settleThenFlush(gateway, context, verified, res, originalJson, body, next);
     return res;
   } as typeof res.json;
 }
 
 async function settleThenFlush(
-  httpServer: x402HTTPResourceServer,
+  gateway: X402Gateway,
   context: HTTPRequestContext,
   verified: PaymentVerified,
   res: Response,
@@ -295,7 +345,7 @@ async function settleThenFlush(
   next: NextFunction,
 ): Promise<void> {
   try {
-    const settlement = await httpServer.processSettlement(
+    const settlement = await gateway.processSettlement(
       verified.paymentPayload,
       verified.paymentRequirements,
       verified.declaredExtensions,

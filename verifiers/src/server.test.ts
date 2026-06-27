@@ -8,8 +8,8 @@ import * as ed from "@noble/ed25519";
 import { sha512 } from "@noble/hashes/sha512";
 import { bytesToHex } from "@noble/hashes/utils";
 import { verifyVerdict } from "@quittance/core";
-import { createVerifierApp } from "./server.js";
-import type { VerifierPaymentConfig } from "./server.js";
+import { buildX402GateMiddleware, createVerifierApp } from "./server.js";
+import type { VerifierPaymentConfig, X402Gateway } from "./server.js";
 import { fileCashflowSource } from "./cashflow-source.js";
 import type { CashflowEvidence, CashflowSource } from "./verdict.js";
 
@@ -271,5 +271,155 @@ describe("real casper-x402 gate", () => {
   // RECTOR's sign-off. Kept as a skipped marker for traceability.
   it.skip("real gate returns 402 + PAYMENT-REQUIRED without PAYMENT-SIGNATURE (controller-verified live)", () => {
     // intentionally skipped: requires facilitator network access
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Deferred-settlement binding (fake X402Gateway)
+//
+// The real gate's settle path (buildX402GateMiddleware -> runCasperX402Gate ->
+// installSettlementInterceptor -> settleThenFlush) is bypassed by the
+// pass-through gate above. Here we drive it directly with a FAKE gateway whose
+// processHTTPRequest returns `payment-verified` and whose processSettlement is
+// stubbed — exercising the four deterministic branches offline (no network, no
+// on-chain). The live verify/settle calls remain controller-verified.
+// ---------------------------------------------------------------------------
+
+const VERIFIED_REQUIREMENTS = {
+  scheme: "exact",
+  network: "casper:casper-test",
+  asset: PAYMENT.asset,
+  amount: PAYMENT.priceMotes,
+  payTo: PAYMENT.payTo,
+  maxTimeoutSeconds: 300,
+  extra: { name: "Wrapped CSPR", version: "1" },
+};
+
+const VERIFIED_RESULT = {
+  type: "payment-verified" as const,
+  cancellationDispatcher: { cancel: async () => undefined },
+  paymentPayload: { x402Version: 2, accepted: VERIFIED_REQUIREMENTS, payload: {} },
+  paymentRequirements: VERIFIED_REQUIREMENTS,
+  declaredExtensions: {},
+};
+
+const SETTLE_SUCCESS = {
+  success: true,
+  transaction: "ab".repeat(32),
+  network: "casper:casper-test",
+  headers: { "PAYMENT-RESPONSE": "c2V0dGxlZA==" },
+  requirements: VERIFIED_REQUIREMENTS,
+};
+
+const SETTLE_FAILURE = {
+  success: false,
+  errorReason: "insufficient_funds",
+  errorMessage: "insufficient_funds",
+  network: "casper:casper-test",
+  transaction: "",
+  headers: { "PAYMENT-RESPONSE": "ZmFpbGVk" },
+  response: {
+    status: 402,
+    headers: {
+      "Content-Type": "application/json",
+      "PAYMENT-RESPONSE": "ZmFpbGVk",
+    },
+    body: { error: "settlement failed: insufficient_funds" },
+  },
+};
+
+function appWithGateway(parts: {
+  processSettlement?: ReturnType<typeof vi.fn>;
+  processHTTPRequest?: ReturnType<typeof vi.fn>;
+  initialize?: ReturnType<typeof vi.fn>;
+  source?: CashflowSource;
+}) {
+  const gateway = {
+    initialize: parts.initialize ?? vi.fn(async () => undefined),
+    processHTTPRequest:
+      parts.processHTTPRequest ?? vi.fn(async () => VERIFIED_RESULT),
+    processSettlement:
+      parts.processSettlement ?? vi.fn(async () => SETTLE_SUCCESS),
+  };
+  const app = createVerifierApp({
+    verifier: {
+      source: parts.source ?? sourceFrom(MATCHING_EVIDENCE),
+      signingKeyHex: freshSigningKeyHex(),
+      label: LABEL,
+    },
+    payment: PAYMENT,
+    x402Gate: buildX402GateMiddleware(gateway as unknown as X402Gateway),
+  });
+  return { app, gateway };
+}
+
+describe("deferred-settlement binding (fake gateway)", () => {
+  it("(a) 2xx verdict: settles and attaches PAYMENT-RESPONSE before flushing the body", async () => {
+    const { app, gateway } = appWithGateway({});
+
+    const res = await request(app).get(
+      `/verify?asset=${ASSET_ID}&cycle=${CYCLE_ID}`,
+    );
+
+    expect(res.status).toBe(200);
+    // Header present ALONGSIDE the verdict body proves the deferred flush:
+    // settlement ran (and set the header) before the body was written.
+    expect(res.headers["payment-response"]).toBe("c2V0dGxlZA==");
+    expect(res.body.verdict.verdict).toBe("yes");
+    expect(verifyVerdict(res.body)).toBe(true);
+    expect(gateway.initialize).toHaveBeenCalledTimes(1);
+    expect(gateway.processSettlement).toHaveBeenCalledTimes(1);
+    expect(gateway.processSettlement).toHaveBeenCalledWith(
+      VERIFIED_RESULT.paymentPayload,
+      VERIFIED_RESULT.paymentRequirements,
+      VERIFIED_RESULT.declaredExtensions,
+      { request: expect.objectContaining({ path: "/verify", method: "GET" }) },
+    );
+  });
+
+  it("(b) non-2xx handler response: settlement is SKIPPED (no charge for a refused request)", async () => {
+    // Gate verifies payment, then the handler 400s on the missing asset param.
+    const { app, gateway } = appWithGateway({});
+
+    const res = await request(app).get(`/verify?cycle=${CYCLE_ID}`);
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/asset/i);
+    expect(gateway.processSettlement).not.toHaveBeenCalled();
+  });
+
+  it("(c) settlement failure: writes the SDK's 402 instructions and discards the verdict body", async () => {
+    const { app, gateway } = appWithGateway({
+      processSettlement: vi.fn(async () => SETTLE_FAILURE),
+    });
+
+    const res = await request(app).get(
+      `/verify?asset=${ASSET_ID}&cycle=${CYCLE_ID}`,
+    );
+
+    expect(res.status).toBe(402);
+    expect(res.body).toEqual(SETTLE_FAILURE.response.body);
+    expect(res.body.verdict).toBeUndefined();
+    expect(res.headers["payment-response"]).toBe("ZmFpbGVk");
+    expect(gateway.processSettlement).toHaveBeenCalledTimes(1);
+  });
+
+  it("(d) settlement throws: next(err) -> 500 via the error middleware", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const { app, gateway } = appWithGateway({
+      processSettlement: vi.fn(async () => {
+        throw new Error("facilitator unreachable");
+      }),
+    });
+
+    const res = await request(app).get(
+      `/verify?asset=${ASSET_ID}&cycle=${CYCLE_ID}`,
+    );
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe("verifier failed to process the request");
+    expect(gateway.processSettlement).toHaveBeenCalledTimes(1);
+    expect(errorSpy).toHaveBeenCalled();
+    errorSpy.mockRestore();
   });
 });

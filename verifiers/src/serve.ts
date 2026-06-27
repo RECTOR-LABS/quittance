@@ -28,6 +28,17 @@ function requirePort(name: string): number {
   return port;
 }
 
+/** Parse an optional positive-integer env var; undefined when unset/blank. */
+function optionalPositiveInt(name: string): number | undefined {
+  const raw = process.env[name];
+  if (raw === undefined || raw.trim() === "") return undefined;
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value <= 0) {
+    throw new Error(`${name} must be a positive integer, got: "${raw}"`);
+  }
+  return value;
+}
+
 function main(): void {
   const label = requireEnv("VERIFIER_LABEL");
   const port = requirePort("VERIFIER_PORT");
@@ -37,6 +48,8 @@ function main(): void {
     signingKeyHex: requireEnv("VERIFIER_SIGNING_KEY_HEX"),
     label,
   };
+
+  const maxTimeoutSeconds = optionalPositiveInt("VERIFIER_MAX_TIMEOUT_SECONDS");
 
   const payment: VerifierPaymentConfig = {
     facilitatorUrl: requireEnv("X402_FACILITATOR_URL"),
@@ -51,15 +64,24 @@ function main(): void {
     tokenName: process.env.WCSPR_TOKEN_NAME?.trim() || "Wrapped CSPR",
     tokenVersion: process.env.WCSPR_TOKEN_VERSION?.trim() || "1",
     expectedReference: requireEnv("VERIFIER_EXPECTED_REFERENCE"),
+    // Optional; server.ts applies DEFAULT_MAX_TIMEOUT_SECONDS when omitted.
+    ...(maxTimeoutSeconds !== undefined ? { maxTimeoutSeconds } : {}),
   };
 
   const app = createVerifierApp({ verifier, payment });
-  app.listen(port, () => {
+  const server = app.listen(port, () => {
     // No secrets: only non-sensitive operational facts.
     console.log(
       `[verifier:${label}] listening on :${port} ` +
         `(network=${payment.network}, route=GET /verify)`,
     );
+  });
+  // listen() reports bind failures (e.g. EADDRINUSE) asynchronously, after the
+  // sync try/catch below has returned — surface them with the same curated
+  // message and a non-zero exit.
+  server.on("error", (err: NodeJS.ErrnoException) => {
+    console.error(`[verifier] failed to start: ${err.message}`);
+    process.exit(1);
   });
 }
 
