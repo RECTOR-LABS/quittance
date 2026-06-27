@@ -27,3 +27,6 @@ coverage/
 
 # SDD scratch (subagent-driven-development ledger + briefs)
 .superpowers/
+
+# Claude Code local scratch (worktrees, settings) — never commit
+.claude/
