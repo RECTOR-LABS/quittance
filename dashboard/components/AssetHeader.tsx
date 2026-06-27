@@ -1,38 +1,39 @@
-import { FileText } from 'lucide-react';
 import type { AssetConfig } from '@/lib/types';
 import { motesToCspr } from '@/lib/format';
 import { TxLink } from './TxLink';
 
 export function AssetHeader({ asset }: { asset: AssetConfig }) {
+  const rows: ReadonlyArray<readonly [string, string]> = [
+    ['Expected cashflow', `${motesToCspr(asset.expectedCashflowMotes)} CSPR`],
+    ['Pool funded', `${motesToCspr(asset.pool.fundedMotes)} CSPR`],
+    ['Quorum', `${asset.quorumRequired}-of-${asset.verifiers.length}`],
+  ];
   return (
-    <header className="rounded-xl border border-edge bg-panel/40 p-5">
-      <div className="flex items-center gap-2 text-accent">
-        <FileText size={18} />
-        <span className="font-semibold">{asset.reference}</span>
+    <header className="overflow-hidden rounded-lg border border-edge bg-panel/40">
+      <div className="border-b border-dashed border-edge px-5 py-3">
+        <div className="font-mono text-[10px] uppercase tracking-[0.22em] text-accent">Tokenized receivable</div>
+        <div className="mt-1 flex items-baseline justify-between">
+          <div className="font-mono text-2xl font-bold tracking-tight">{asset.reference}</div>
+          <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-yes">● active</span>
+        </div>
       </div>
-      <p className="mt-2 max-w-2xl text-sm text-muted">{asset.narrative}</p>
-      <dl className="mt-4 grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
-        <div>
-          <dt className="text-muted">Expected cashflow</dt>
-          <dd className="font-mono">{motesToCspr(asset.expectedCashflowMotes)} CSPR</dd>
-        </div>
-        <div>
-          <dt className="text-muted">Pool funded</dt>
-          <dd className="font-mono">{motesToCspr(asset.pool.fundedMotes)} CSPR</dd>
-        </div>
-        <div>
-          <dt className="text-muted">Quorum</dt>
-          <dd className="font-mono">
-            {asset.quorumRequired}-of-{asset.verifiers.length}
-          </dd>
-        </div>
-        <div>
-          <dt className="text-muted">Vault</dt>
-          <dd>
-            <TxLink kind="contract" hash={asset.vault.packageHash} label="contract" />
-          </dd>
-        </div>
-      </dl>
+      <div className="px-5 py-4">
+        <p className="max-w-2xl font-sans text-sm leading-relaxed text-muted">{asset.narrative}</p>
+        <dl className="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-4">
+          {rows.map(([k, v]) => (
+            <div key={k}>
+              <dt className="font-mono text-[10px] uppercase tracking-[0.18em] text-muted">{k}</dt>
+              <dd className="mt-0.5 font-mono text-sm font-bold">{v}</dd>
+            </div>
+          ))}
+          <div>
+            <dt className="font-mono text-[10px] uppercase tracking-[0.18em] text-muted">Vault</dt>
+            <dd className="mt-0.5">
+              <TxLink kind="contract" hash={asset.vault.packageHash} label="on-chain" />
+            </dd>
+          </div>
+        </dl>
+      </div>
     </header>
   );
 }

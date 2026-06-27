@@ -15,11 +15,14 @@ export default async function HolderPage() {
     })),
   );
   return (
-    <div className="space-y-4">
-      <h1 className="text-xl font-semibold">Holder receipts</h1>
-      <p className="text-sm text-muted">
-        After the fraud cycle halted, these balances are unchanged — the refusal, from the holder&apos;s side.
-      </p>
+    <div className="space-y-6">
+      <section>
+        <div className="font-mono text-[10px] uppercase tracking-[0.25em] text-accent">Holder receipts</div>
+        <h1 className="mt-2 max-w-2xl font-sans text-2xl font-semibold leading-snug">
+          Balances are live from chain — and unchanged after the fraud cycle halted.
+        </h1>
+        <p className="mt-2 font-sans text-sm text-muted">The refusal, seen from the holder&apos;s side: no quorum, no payout.</p>
+      </section>
       <div className="grid gap-3">
         {rows.map((r) => (
           <HolderRow key={r.holder.label} holder={r.holder} receivedMotes={r.received} liveMotes={r.live} distributeTx={happy.distributeTx} />
