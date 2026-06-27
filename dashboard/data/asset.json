@@ -1,0 +1,33 @@
+{
+  "assetId": "inv-001",
+  "reference": "INV-001",
+  "expectedCashflowMotes": "1000000000000",
+  "narrative": "An SMB receivable. Investors hold fractions and are repaid only when the client's payment is independently verified by a 2-of-3 quorum.",
+  "vault": {
+    "entityHash": "6a6747d294af421c11f62b400167580600329c48bfc9cce3c2a76db42b27e132",
+    "packageHash": "fb5225d80e8bc59d7e8581f6be2118e3442ab69eea432d9ad79daf1fbd222d3f",
+    "installTx": "4313f7499d17804a74b38ef9503d18bfd4cbff415606cde5e9fe6e04ef1c4c9e"
+  },
+  "quorumRequired": 2,
+  "pool": { "fundedMotes": "10000000000", "fundTx": null },
+  "registerTx": null,
+  "holders": [
+    {
+      "label": "Holder A",
+      "publicKeyHex": "01ea7f6e28f405f2acdba965e40e64e2004cfffdf671ed10f089d0db880806a016",
+      "accountHash": "0c61a1f572e6bb7b2a3cf23b01105897ea10ac8468d395c36f46f6dff4b6179b",
+      "weightPct": 70
+    },
+    {
+      "label": "Holder B",
+      "publicKeyHex": "01c7c0511eb6d71eadc085842fb7fa28ef56c1a1a38e7355652fc32ce572f63567",
+      "accountHash": "48f10c6a95265cd6ba51ececa3b8bb019ca6888451b5e2891e3be3bbe4fbd2a9",
+      "weightPct": 30
+    }
+  ],
+  "verifiers": [
+    { "label": "v1", "publicKeyHex": "0121423f386b2700fe0cc65a5bb3bbb8dcadfa1dac6abe89b51f23b0af72c72892", "payTo": "006851f526df86b7357f5f93a9d4fc1bdacbefc2b0636f9c7cdec5348b91f573b9" },
+    { "label": "v2", "publicKeyHex": "01d13c0fd57a9f58046fa4527777d3367350c739bc97eb55a21d6452267da65105", "payTo": "003dbead68066ca8752b49f857887efc8f32bc5d034bbab3fc91ca3ca655032475" },
+    { "label": "v3", "publicKeyHex": "014970062de460a171b72fd7546ff17efaaceacf1c615a239cb1e254f736566697", "payTo": "004e6470804c7f80c18899373969eb4fb555bad6203415b991054ee673b1ba0f21" }
+  ]
+}
