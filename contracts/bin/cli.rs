@@ -30,6 +30,9 @@ impl DeployScript for ServicerVaultDeployScript {
 
 /// Main function to run the CLI tool.
 pub fn main() {
+    // Surface the underlying deploy error that odra-casper-livenet-env logs via
+    // the `log` facade (otherwise masked as the opaque ContractDeploymentError).
+    env_logger::init();
     OdraCli::new()
         .about("CLI tool for the ServicerVault smart contract")
         .deploy(ServicerVaultDeployScript)
