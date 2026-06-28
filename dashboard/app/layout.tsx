@@ -23,6 +23,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <div className="flex items-center gap-6 font-mono text-xs uppercase tracking-[0.18em]">
               <Link href="/" className="text-muted transition-colors hover:text-gray-100">Issuer</Link>
               <Link href="/holder" className="text-muted transition-colors hover:text-gray-100">Holder</Link>
+              <Link href="/demo" className="text-muted transition-colors hover:text-gray-100">Demo</Link>
             </div>
           </div>
         </nav>
