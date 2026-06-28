@@ -1,58 +1,155 @@
-# Quittance
+<p align="center">
+  <img src="./assets/hero.png" alt="Quittance — verify, not attest" width="100%">
+</p>
 
-**Autonomous, verification-gated servicing for tokenized real-world cashflows on Casper.**
+<p align="center">
+  <a href="https://quittance.rectorspace.com"><img src="https://img.shields.io/badge/live%20demo-quittance.rectorspace.com-46c45f?style=flat-square" alt="Live demo"></a>
+  <a href="https://quittance.rectorspace.com/demo"><img src="https://img.shields.io/badge/demo%20video-watch-e0473c?style=flat-square" alt="Demo video"></a>
+  <img src="https://img.shields.io/badge/network-casper--testnet-e0473c?style=flat-square" alt="Casper testnet">
+  <img src="https://img.shields.io/badge/contract-Odra-e0473c?style=flat-square" alt="Odra">
+  <img src="https://img.shields.io/badge/license-MIT-8a92a3?style=flat-square" alt="MIT">
+</p>
 
-Quittance is an autonomous agent and on-chain vault that releases a tokenized real-world cashflow to its holders **only after independently verifying the money actually arrived** — verification, not attestation.
+<p align="center">
+  <b>Autonomous, verification-gated servicing for tokenized real-world cashflows on Casper.</b><br>
+  An autonomous agent and on-chain vault that release a tokenized cashflow to its holders
+  <i>only after independently verifying the money actually arrived</i> — <b>verification, not attestation</b>.
+</p>
 
-Built for the [Casper Agentic Buildathon 2026](https://dorahacks.io/hackathon/casper-agentic-buildathon) · Casper Innovation Track · Casper Testnet.
+<p align="center">
+  Built for the <a href="https://dorahacks.io/hackathon/casper-agentic-buildathon">Casper Agentic Buildathon 2026</a> · Casper Innovation Track.
+</p>
+
+---
+
+## Contents
+
+- [The problem](#the-problem)
+- [The insight](#the-insight-verify-not-attest)
+- [How it works](#how-it-works)
+- [The demonstrable moment](#the-demonstrable-moment)
+- [Proven on-chain](#proven-on-chain-casper-test)
+- [See it live](#see-it-live)
+- [Architecture](#architecture)
+- [Repository layout](#repository-layout)
+- [Run it locally](#run-it-locally)
+- [Honesty & disclosure](#honesty--disclosure)
+- [License](#license)
+
+---
 
 ## The problem
 
-Tokenized real-world assets — invoices, rent, royalties, private credit — are a growing on-chain market, but *servicing* them (confirming the off-chain cashflow genuinely arrived, then distributing it to token holders) is still manual and trust-based. On-chain today, projects push data *in* via oracles; nobody autonomously pushes verified cashflow *out*. Holders are left trusting an issuer's word.
+Tokenized real-world assets — invoices, rent, royalties, private credit — are a fast-growing on-chain market. But **servicing** them is still manual and trust-based: someone has to confirm the off-chain cashflow genuinely arrived, then distribute it to token holders. On-chain today, projects push data *in* via oracles; nobody autonomously pushes **verified cashflow out**. Holders are left trusting an issuer's word that they got paid.
 
-## The insight
+> Recording that a payout happened is not proof it was *owed*.
 
-Recording that a payout happened is not proof it was *owed*. Quittance shifts from **attestation** (a single source's say-so) to **verification** (an independent 2-of-3 quorum) before any funds move.
+## The insight: verify, not attest
+
+Quittance shifts servicing from **attestation** (one source's say-so) to **verification** (an independent **2-of-3 quorum**) *before any funds move*. The agent doesn't take anyone's word — it pays independent verifiers to check, and gates the on-chain distribution on their quorum.
 
 ## How it works
 
-Each cycle, the servicer agent:
+Each cycle, the autonomous servicer agent:
 
-1. Detects a cycle is due for a tokenized asset.
-2. Pays **three independent verifiers** over x402 to answer "did the cashflow arrive?"
-3. Requires a **2-of-3 quorum**.
-4. If met, executes the on-chain distribution to holders pro-rata and writes a verifiable receipt.
-5. If not, halts, pays nothing, and flags a dispute.
+1. **Detects** a cycle is due for a tokenized asset.
+2. **Pays three independent verifiers over [x402](https://x402.org)** to answer: *"did the cashflow arrive?"* — real, per-call economic commitment, settled on Casper.
+3. **Requires a 2-of-3 quorum** of signed yes/no verdicts.
+4. **If met** → calls the vault's quorum-gated `distribute()`, paying holders pro-rata on-chain, and writes a verifiable receipt (signers + verdict hashes in the event).
+5. **If not** → **halts, pays out nothing, flags a dispute.**
 
-The demonstrable moment: feed a fake "paid" claim and watch the agent **refuse to release funds**.
+```
+detect cycle → pay 3 verifiers (x402) → 2-of-3 quorum?
+                                          ├─ yes → distribute on-chain + receipt
+                                          └─ no  → HALT · funds withheld
+```
+
+## The demonstrable moment
+
+Feed a fake *"paid"* claim through one compromised verifier and watch the agent **refuse to release the funds**. That refusal — paid-for, independent, and enforced on-chain — is the whole product.
+
+## Proven on-chain (casper-test)
+
+Both paths are real, executed, and verifiable on [`testnet.cspr.live`](https://testnet.cspr.live). The agent uses the **same vault and the same three verifiers** for both cycles — *only the consensus differs.*
+
+| Event | Path | Result | Transaction |
+| --- | --- | --- | --- |
+| `ServicerVault` deployed | — | entity `6a6747d2…b27e132` | [`4313f749…1c4c9e`](https://testnet.cspr.live/deploy/4313f7499d17804a74b38ef9503d18bfd4cbff415606cde5e9fe6e04ef1c4c9e) |
+| Qualifying x402 settle | — | first verifier payment | [`6b03ad75…bf3cd4`](https://testnet.cspr.live/deploy/6b03ad751ff6c044e3ff2cbfea47d628643e3b58dabdf6d087a4cc5609bf3cd4) |
+| **Distribute** | ✅ **Happy** — 3/3 → quorum met | **Holder A +7 / Holder B +3 CSPR** (pro-rata) | [`6821e0f3…c37829`](https://testnet.cspr.live/deploy/6821e0f3e6b01325965562f964047782dab13d4602b7dae7bc7e67c70ac37829) |
+| Verifier settle · v1 | 🛑 **Fraud** — 1/3 → quorum NOT met | agent paid, **then halted** | [`a02b1c7d…d6a7d`](https://testnet.cspr.live/deploy/a02b1c7d2ed52ea82ff68740d9b5a65d9716cee8594b482a13d0c27e846d6a7d) |
+| Verifier settle · v2 | 🛑 Fraud | agent paid, then halted | [`40a85e53…75df93`](https://testnet.cspr.live/deploy/40a85e53df987e9af3b3e2261833419de84676245332c5fa8570354b8875df93) |
+| Verifier settle · v3 | 🛑 Fraud | agent paid, then halted | [`8a962e50…4115ff`](https://testnet.cspr.live/deploy/8a962e502601c27db98a8195ef6c790f18df25f32c56b40306c02d8f5b4115ff) |
+
+**The result that matters:** in the fraud cycle one verifier lies *"yes"* while the two honest ones say *"no."* The agent still pays all three for verification (real money, on-chain) — and **still refuses to release the cashflow on a single dishonest "yes."** Holder balances stay unchanged; the agent's own funds never move into a distribution. **You cannot bribe one verifier to unlock the money.**
+
+## See it live
+
+| | |
+| --- | --- |
+| 🟢 **Live dashboard** | **[quittance.rectorspace.com](https://quittance.rectorspace.com)** — issuer view (asset + both cycle histories) |
+| 👛 **Holder view** | [quittance.rectorspace.com/holder](https://quittance.rectorspace.com/holder) — balances read **live from chain** (7 / 3 CSPR, unchanged) |
+| 🎬 **Demo video** | [quittance.rectorspace.com/demo](https://quittance.rectorspace.com/demo) (~2 min) |
 
 ## Architecture
 
-| Component | Responsibility |
-| --- | --- |
-| `ServicerVault` (Odra) | Holds the distribution pool + holder registry, records per-cycle receipts, exposes quorum-gated `distribute()`. |
-| Servicer agent (TS) | Runs the cycle; pays verifiers and calls the contract through stable adapter seams. |
-| Verifier services ×3 (TS) | Independent, x402-gated endpoints returning signed yes/no verdicts. |
-| Dashboard (Next.js) | Issuer configuration + holder view with receipts and on-chain tx links. |
+| Component | Responsibility | Stack |
+| --- | --- | --- |
+| **`ServicerVault`** | Holds the native-CSPR distribution pool + holder registry; records per-cycle receipts; exposes quorum-gated `distribute()`. | **Odra** (Rust), Casper |
+| **Servicer agent** | Runs the cycle: pays verifiers over x402, enforces the quorum, calls the contract through stable adapter seams, verifies finality. | TypeScript, `casper-js-sdk` v5 |
+| **Verifier services ×3** | Independent, **x402-gated** HTTP endpoints returning *signed* yes/no verdicts over evidence. | TypeScript / Express |
+| **Dashboard** | Issuer config + holder view: cycle history, quorum stamps, live on-chain balances, every tx deep-linked to cspr.live. | Next.js 15, Railway |
 
-An architecture diagram will live in `assets/` once the build begins.
+**Casper-native by design:** an Odra contract on casper-test, a native-CSPR pool with pro-rata transfers, x402 verifier payments settled via the CSPR.cloud facilitator, real Ed25519 Casper identities, and holder balances read live from chain.
 
-## Status
+## Repository layout
 
-Planning complete; qualifier build targets the July 1 deadline.
+```
+quittance/
+├── agent/          # autonomous servicer agent — runCycle state machine
+├── packages/
+│   ├── core/       # domain logic: verdict verification, quorum rules (framework-free)
+│   └── adapters/   # chain + verifier client adapters (casper-js-sdk, x402)
+├── contracts/      # ServicerVault — Odra (Rust) smart contract + wasm
+├── verifiers/      # x402-gated verifier services (independent yes/no signers)
+├── dashboard/      # Next.js dashboard (issuer + holder views), deployed on Railway
+├── e2e/            # end-to-end harness: deploy, fund, run-cycle, settle, check-balances
+├── SPEC.md         # design
+├── PLAN.md         # implementation plan
+└── DAY1-DERISK.md  # critical-path de-risk runbook
+```
 
-- [`SPEC.md`](./SPEC.md) — design
-- [`PLAN.md`](./PLAN.md) — implementation plan (qualifier)
-- [`DAY1-DERISK.md`](./DAY1-DERISK.md) — critical-path de-risk runbook
+## Run it locally
 
-## Reference vertical
+Prerequisites: **Node ≥ 18**, **pnpm**, and (for the contract) the **Rust toolchain + [cargo-odra](https://odra.dev)**.
 
-Invoice financing is the demo anchor (most legible, cleanest independent verification). Quittance is asset-agnostic by design — private credit, rent, and royalty streams are the documented expansion path.
+```bash
+pnpm install                                   # install the workspace
+pnpm --filter @quittance/core test             # domain logic (verdict + quorum)
+pnpm --filter @quittance/dashboard dev          # dashboard at http://localhost:3000
+pnpm --filter @quittance/dashboard test         # dashboard unit tests
+```
+
+Contract build & tests:
+
+```bash
+cd contracts && cargo odra test                # OdraVM unit tests
+```
+
+End-to-end on casper-test (needs a funded testnet key — see `.env.example`):
+
+```bash
+node e2e/deploy-servicer.mjs submit            # deploy the vault
+node e2e/harness/run-cycle.mjs happy           # quorum met  → distribute
+node e2e/harness/run-cycle.mjs fraud           # quorum fails → halt
+```
 
 ## Honesty & disclosure
 
-For the buildathon demo, the off-chain "cashflow arrived" evidence is **mocked/sandboxed** — the three verifiers stand in for real payment-rail adapters (bank APIs, Stripe). The innovation is the verification-gated autonomous release, not the data source. Testnet only; the payout token is a test CEP-18, not a real stablecoin.
+For the buildathon demo, the off-chain *"cashflow arrived"* evidence is **mocked/sandboxed** — the three verifiers stand in for real payment-rail adapters (bank APIs, Stripe, etc.). The innovation is the **verification-gated autonomous release**, not the data source. **Testnet only**: verifier payments use WCSPR via x402, holder distribution is native test CSPR; the payout token is a test asset, not a real stablecoin.
 
 ## License
 
-MIT — see [LICENSE](./LICENSE).
+[MIT](./LICENSE) — © RECTOR-LABS.
+
+<p align="center"><sub>Quittance · casper-test · <b>verify, not attest</b></sub></p>
