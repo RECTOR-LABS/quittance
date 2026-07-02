@@ -1,7 +1,7 @@
 # Design — Dashboard Deployment Migration: Railway → Vercel
 
 - **Date:** 2026-07-01
-- **Status:** Approved (design) — pending implementation plan
+- **Status:** Done — migrated 2026-07-02 (see the plan's Execution Notes for deviations)
 - **Owner:** RECTOR
 - **Scope:** `@quittance/dashboard` (Next.js app) only. Contracts, agent, verifiers, e2e are unaffected.
 

@@ -208,3 +208,17 @@ git commit -S -m "chore(deploy): migrate dashboard to Vercel, drop Railway confi
 **Type/consistency:** No code interfaces to drift. The env var name (`CASPER_NODE_URL`), the RPC value, the Railway CNAME (`k1j5014s.up.railway.app`), and the branch name are identical everywhere they appear.
 
 **Deviation from spec ordering** is documented above (code cleanup batched to the end) with its justification and contingency — the only intentional divergence.
+
+---
+
+## Execution Notes (2026-07-02)
+
+Executed inline. Actual course vs. the plan as written:
+
+- **Deploy method: Vercel CLI, then Git integration** (not the dashboard import). Project `quittance` created under the `rectors-projects` **Hobby** team (both the personal account and that team are `hobby`/free). After cutover, connected to `RECTOR-LABS/quittance` via `vercel git connect` — production branch `main`, `rootDirectory=dashboard`, `framework=nextjs` — for push-to-deploy. Git builds run from the repo root with pnpm + the frozen lockfile.
+- **Two fixes were REQUIRED, not optional** (the plan hedged `output: 'standalone'` removal as low-stakes cleanup — it is load-bearing):
+  1. Removed `output: 'standalone'` — on Vercel it diverts Next's output so **every app route 404s** (static `public/` assets still serve). Caught at Gate #1.
+  2. Set project **`framework=nextjs`** — a bare `vercel project add` leaves the framework unset, so Vercel served the build as a static site (routes 404). Set via the projects API.
+- **Railway self-terminated** (service status **Failed**) mid-window — the domain was already returning `404 Application not found`, so "zero-downtime" became a **restore**. Rollback-to-Railway was void; the live Vercel CLI deployment was the safety net during the git-connect step.
+- **DNS cutover:** Cloudflare grey-cloud CNAME → `dbd257d35fdce21a.vercel-dns-017.com` (Vercel per-account target). Propagated + Let's Encrypt TLS issued in ~20s.
+- **Final step:** delete the Railway `quittance` project (id `1da66400-…`), already Failed/dead.
