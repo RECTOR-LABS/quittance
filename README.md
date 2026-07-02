@@ -98,7 +98,7 @@ Both paths are real, executed, and verifiable on [`testnet.cspr.live`](https://t
 | **`ServicerVault`** | Holds the native-CSPR distribution pool + holder registry; records per-cycle receipts; exposes quorum-gated `distribute()`. | **Odra** (Rust), Casper |
 | **Servicer agent** | Runs the cycle: pays verifiers over x402, enforces the quorum, calls the contract through stable adapter seams, verifies finality. | TypeScript, `casper-js-sdk` v5 |
 | **Verifier services ×3** | Independent, **x402-gated** HTTP endpoints returning *signed* yes/no verdicts over evidence. | TypeScript / Express |
-| **Dashboard** | Issuer config + holder view: cycle history, quorum stamps, live on-chain balances, every tx deep-linked to cspr.live. | Next.js 15, Railway |
+| **Dashboard** | Issuer config + holder view: cycle history, quorum stamps, live on-chain balances, every tx deep-linked to cspr.live. | Next.js 15, Vercel |
 
 **Casper-native by design:** an Odra contract on casper-test, a native-CSPR pool with pro-rata transfers, x402 verifier payments settled via the CSPR.cloud facilitator, real Ed25519 Casper identities, and holder balances read live from chain.
 
@@ -112,7 +112,7 @@ quittance/
 │   └── adapters/   # chain + verifier client adapters (casper-js-sdk, x402)
 ├── contracts/      # ServicerVault — Odra (Rust) smart contract + wasm
 ├── verifiers/      # x402-gated verifier services (independent yes/no signers)
-├── dashboard/      # Next.js dashboard (issuer + holder views), deployed on Railway
+├── dashboard/      # Next.js dashboard (issuer + holder views), deployed on Vercel
 ├── e2e/            # end-to-end harness: deploy, fund, run-cycle, settle, check-balances
 ├── SPEC.md         # design
 ├── PLAN.md         # implementation plan

@@ -1,0 +1,5 @@
+# Vercel
+.vercel
+
+# local env files (keep .env.example tracked)
+.env*.local
