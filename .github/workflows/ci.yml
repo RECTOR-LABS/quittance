@@ -26,7 +26,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       # Version is read from package.json "packageManager": "pnpm@10.33.2";
       # do NOT set `version:` here — action-setup@v4 errors on the double-spec.
