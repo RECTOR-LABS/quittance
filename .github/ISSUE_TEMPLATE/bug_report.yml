@@ -1,0 +1,71 @@
+name: 🐛 Bug report
+description: Something isn't working as expected
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug. A few things to know:
+        - This project runs on **Casper Testnet only**.
+        - For security issues, see [SECURITY.md](https://github.com/RECTOR-LABS/quittance/blob/main/SECURITY.md) — **do not** file a public bug for those.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear description of the unexpected behavior. Include the smallest reproduction you can.
+      placeholder: "When I ran `node e2e/harness/run-cycle.mjs fraud`, the agent …"
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect?
+      description: What you thought *should* happen.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      options:
+        - contracts (ServicerVault / Odra)
+        - packages/core (quorum / signing / types)
+        - packages/adapters (casper-js-sdk / casper-x402)
+        - agent (servicer cycle)
+        - verifiers (x402 server)
+        - dashboard (Next.js)
+        - e2e (harness)
+        - docs / other
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Exact commands, starting from a clean checkout.
+      placeholder: |
+        pnpm install
+        pnpm --recursive build
+        node e2e/harness/run-cycle.mjs happy
+    validations:
+      required: true
+
+  - type: input
+    id: path
+    attributes:
+      label: On-chain transaction / deploy hash (if applicable)
+      description: Casper testnet deploy hash or cspr.live link, if this involves an on-chain action.
+      placeholder: "6821e0f3…c37829"
+
+  - type: textarea
+    id: env
+    attributes:
+      label: Environment
+      description: OS, Node, pnpm versions, branch/commit.
+      placeholder: "macOS 14, Node 20.x, pnpm 10.33.2, main @ <commit>"
+    validations:
+      required: true

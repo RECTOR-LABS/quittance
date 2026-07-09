@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 📚 Quittance dashboard (live)
+    url: https://quittance.rectorspace.com
+    about: See the live demo, holder view, and on-chain proof.
+  - name: 🔒 Security report
+    url: https://github.com/RECTOR-LABS/quittance/blob/main/SECURITY.md
+    about: Found a security issue? Do NOT open a public issue — report it privately.
+  - name: 💬 Casper Developer Discord
+    url: https://discord.com/invite/caspernetwork
+    about: Questions about the Casper chain / SDK? Ask the Casper community.
