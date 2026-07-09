@@ -1,0 +1,84 @@
+# Dependabot — keep Quittance's deps current.
+# See https://docs.github.com/code-security/dependabot/dependabot-version-updates
+#
+# Quittance is a pnpm workspace. Dependabot treats each directory as a separate
+# update set, so we list every workspace package + the root. Minor/patch updates
+# are grouped per ecosystem to keep the PR log quiet; majors get individual PRs.
+version: 2
+
+updates:
+  # --- npm: root + every workspace package ---
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    groups:
+      npm-minor-patch:
+        update-types: ["minor", "patch"]
+    commit-message:
+      prefix: "chore(deps)"
+      include: scope
+    labels: ["dependencies"]
+
+  - package-ecosystem: "npm"
+    directory: "/dashboard"
+    schedule: { interval: "weekly", day: "monday" }
+    open-pull-requests-limit: 5
+    groups:
+      npm-minor-patch:
+        update-types: ["minor", "patch"]
+    commit-message: { prefix: "chore(deps)", include: scope }
+    labels: ["dependencies"]
+
+  - package-ecosystem: "npm"
+    directory: "/agent"
+    schedule: { interval: "weekly", day: "monday" }
+    open-pull-requests-limit: 5
+    groups:
+      npm-minor-patch:
+        update-types: ["minor", "patch"]
+    commit-message: { prefix: "chore(deps)", include: scope }
+    labels: ["dependencies"]
+
+  - package-ecosystem: "npm"
+    directory: "/verifiers"
+    schedule: { interval: "weekly", day: "monday" }
+    open-pull-requests-limit: 5
+    groups:
+      npm-minor-patch:
+        update-types: ["minor", "patch"]
+    commit-message: { prefix: "chore(deps)", include: scope }
+    labels: ["dependencies"]
+
+  - package-ecosystem: "npm"
+    directory: "/packages/core"
+    schedule: { interval: "weekly", day: "monday" }
+    open-pull-requests-limit: 5
+    groups:
+      npm-minor-patch:
+        update-types: ["minor", "patch"]
+    commit-message: { prefix: "chore(deps)", include: scope }
+    labels: ["dependencies"]
+
+  - package-ecosystem: "npm"
+    directory: "/packages/adapters"
+    schedule: { interval: "weekly", day: "monday" }
+    open-pull-requests-limit: 5
+    groups:
+      npm-minor-patch:
+        update-types: ["minor", "patch"]
+    commit-message: { prefix: "chore(deps)", include: scope }
+    labels: ["dependencies"]
+
+  # --- GitHub Actions: keep workflow action versions current ---
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule: { interval: "weekly", day: "monday" }
+    open-pull-requests-limit: 5
+    groups:
+      actions-minor-patch:
+        update-types: ["minor", "patch"]
+    commit-message: { prefix: "chore(ci)", include: scope }
+    labels: ["dependencies", "github-actions"]

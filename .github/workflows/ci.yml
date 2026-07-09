@@ -1,0 +1,59 @@
+# CI — build & test the TypeScript workspace on every push/PR to main.
+# Covers: core, adapters, agent, verifiers (vitest) + the Next.js dashboard build.
+# The Rust contract (Odra) is out of CI scope for now — it needs a pinned nightly
+# toolchain + cargo-odra + wasm tooling; add a dedicated job if contract churn resumes.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Cancel superseded runs on the same ref.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build-test:
+    name: Build & test (TS workspace)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Build runs in workspace (topological) order, so core → verifier → agent →
+      # adapters resolve their internal `workspace:*` deps before tests import them.
+      - name: Build all packages
+        run: pnpm --recursive build
+
+      - name: Run all tests
+        run: pnpm --recursive test
+
+      # Prove the dashboard compiles. holder/page.tsx is `force-dynamic` and
+      # lib/chain.ts has a fallback RPC + full try/catch, so the build needs no
+      # secrets. CASPER_NODE_URL is a public testnet endpoint, set as a safety net.
+      - name: Build dashboard
+        run: pnpm --filter @quittance/dashboard build
+        env:
+          CASPER_NODE_URL: https://node.testnet.casper.network/rpc
