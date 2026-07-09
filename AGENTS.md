@@ -51,8 +51,15 @@ vault + same three verifiers, *only the consensus differs:*
 **Deployment:** `quittance.rectorspace.com` (Vercel Hobby, GitHub integration, Cloudflare DNS
 grey-cloud). Migrated off Railway on 2026-07-02 (PRs #1, #2). Holder view: `/holder`. Demo: `/demo`.
 
-**Git:** `main` clean (2 uncommitted files are working-tree noise — see "Working tree hygiene").
-No CI configured. No open PRs/issues.
+**Buildathon review status (2026-07-09):** submission is **in review**; final round is invite-only
+(email notification). The Casper hosts posted final-round requirements (DoraHacks msgs
+2026-07-07 / 2026-07-09): public repo, required topics (`casper-blockchain`, `casper-network`,
+`buildathon`), community health files, CodeQL + Dependabot + CI, no High+ alerts, contract
+hashes + sample testnet txs on the BUIDL page. **All in-repo items landed** in PR #3
+(`chore/buildathon-compliance`): community health 50%→100%, CodeQL (JS/TS + actions),
+Dependabot (npm + github-actions, alerts + security updates enabled), and CI
+(build → 121 tests → dashboard build). Hosts warn: keep the repo functional at all times
+during review — a judge may visit mid-change. So: branch → verify green → merge small.
 
 ---
 
@@ -212,6 +219,6 @@ The qualifier is shipped. Documented (but not yet built) Final-Round / post-hack
 - **Queryable on-chain receipts** — `Mapping<(AssetId, CycleId), Receipt>` + a `get_receipt` read entrypoint (the qualifier ships the `Distributed` *event* as the receipt; a queryable read endpoint is the enhancement).
 - **Multi-asset, multi-cycle** dashboard history.
 - **Verifier marketplace** with staking/slashing (was candidate #2 — explicitly out of scope for the buildathon).
-- **CI** — none configured today; a GitHub Action running `pnpm --recursive test` + `cargo odra test` + dashboard build would be the obvious first add.
+- **CI / security tooling** — **DONE** (PR #3): `ci.yml` (build + 121 tests + dashboard build), `codeql.yml` (JS/TS + actions, codeql-action v4), `dependabot.yml` (npm per workspace pkg + github-actions). The Rust contract (`cargo odra test`) is **not** in CI yet — needs pinned `nightly-2026-01-01` + cargo-odra + wasm tooling; add a dedicated job if contract churn resumes. The only known advisory is a postcss **moderate** (transitive via `next`, < High) — pinnable via `pnpm.overrides` if desired.
 
 Track work in this file's "Current state" section and via the global cross-session TODO.
