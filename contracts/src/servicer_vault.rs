@@ -66,6 +66,31 @@ pub enum Error {
     ZeroTotalWeight = 8,
 }
 
+/// Stored on-chain receipt for a settled `(asset_id, cycle_id)` cycle — the
+/// queryable mirror of the [`Distributed`] event (SPEC-1). Records the payout
+/// totals plus the quorum proof (distinct registered signers + verdict-hash
+/// digests). SPEC-4/5/6 extend this struct with verifier signatures, the AI
+/// brief hash, and the reputation snapshot.
+#[odra::odra_type]
+pub struct Receipt {
+    pub asset_id: String,
+    pub cycle_id: String,
+    /// Block time at settlement (ms since epoch, via `env().get_block_time()`).
+    pub settled_at: u64,
+    /// Amount actually paid out (== `Distributed::total`).
+    pub total_distributed: U512,
+    /// Integer-division dust retained in the pool (`pool - paid`).
+    pub dust_retained: U512,
+    /// Number of holders paid.
+    pub holder_count: u32,
+    /// Required distinct-signer count from `AssetConfig::quorum`.
+    pub quorum_required: u8,
+    /// Distinct registered verifiers whose presence satisfied the gate.
+    pub signers: Vec<PublicKey>,
+    /// Verdict-hash digests presented for the cycle (provenance).
+    pub verdict_hashes: Vec<[u8; 32]>,
+}
+
 #[odra::module(errors = Error, events = [Distributed])]
 pub struct ServicerVault {
     /// `asset_id -> config`.
@@ -78,6 +103,11 @@ pub struct ServicerVault {
     /// agent, which reads this dict via
     /// `queryDictItem(vaultHash, "distributed", `${assetId}:${cycleId}`)`.
     distributed: Mapping<String, bool>,
+    /// `"{asset_id}:{cycle_id}" -> Receipt` once distributed (SPEC-1).
+    ///
+    /// Same colon-joined key as `distributed`; the queryable mirror of the
+    /// [`Distributed`] event. Read via [`ServicerVault::get_receipt`].
+    receipts: Mapping<String, Receipt>,
 }
 
 #[odra::module]
@@ -136,6 +166,14 @@ impl ServicerVault {
     /// Read the pool balance for an asset (`0` if none).
     pub fn pool_of(&self, asset_id: String) -> U512 {
         self.pools.get_or_default(&asset_id)
+    }
+
+    /// Read the stored receipt for a settled `(asset_id, cycle_id)` cycle
+    /// (SPEC-1), or `None` if that cycle has not been distributed yet.
+    /// Read-only; no caller gate; no revert.
+    pub fn get_receipt(&self, asset_id: String, cycle_id: String) -> Option<Receipt> {
+        let key = format!("{asset_id}:{cycle_id}");
+        self.receipts.get(&key)
     }
 
     /// Add attached CSPR to `pools[asset_id]`.
@@ -240,6 +278,23 @@ impl ServicerVault {
 
         // 7. Mark this cycle settled.
         self.distributed.set(&key, true);
+
+        // 7b. Store the queryable receipt (SPEC-1) — same facts as the event,
+        //     readable via `get_receipt`. No change to the gate or payout.
+        self.receipts.set(
+            &key,
+            Receipt {
+                asset_id: asset_id.clone(),
+                cycle_id: cycle_id.clone(),
+                settled_at: self.env().get_block_time(),
+                total_distributed: paid,
+                dust_retained: pool - paid,
+                holder_count: cfg.holders.len() as u32,
+                quorum_required: cfg.quorum,
+                signers: distinct_registered.clone(),
+                verdict_hashes: verdict_hashes.clone(),
+            },
+        );
 
         // 8. Emit the auditable record: settled totals plus the quorum proof —
         //    the distinct registered signer set that satisfied the gate and the
@@ -720,5 +775,242 @@ mod tests {
         // Quorum proof recorded even when dust is carried.
         assert_eq!(event.signers, vec![vk(1), vk(2)]);
         assert_eq!(event.verdict_hashes, vec![hash(0xCC), hash(0xDD)]);
+    }
+
+    // ---- SPEC-1: queryable on-chain receipts (R1–R6) ----------------------
+
+    // R1. get_receipt returns None before distribute.
+    #[test]
+    fn get_receipt_none_before_distribute() {
+        let env = odra_test::env();
+        let token = env.get_account(0);
+        let alice = env.get_account(1);
+        let mut vault = ServicerVault::deploy(&env, NoArgs);
+
+        vault.register_asset(
+            "inv-1".to_string(),
+            token,
+            vec![(alice, U256::from(1))],
+            vec![vk(1), vk(2), vk(3)],
+            2,
+        );
+        vault
+            .with_tokens(U512::from(1000))
+            .fund("inv-1".to_string());
+
+        assert!(vault
+            .get_receipt("inv-1".to_string(), "c1".to_string())
+            .is_none());
+    }
+
+    // R2. after happy distribute, get_receipt mirrors the event.
+    #[test]
+    fn get_receipt_mirrors_event_after_distribute() {
+        let env = odra_test::env();
+        let token = env.get_account(0);
+        let alice = env.get_account(1);
+        let bob = env.get_account(2);
+        let mut vault = ServicerVault::deploy(&env, NoArgs);
+
+        vault.register_asset(
+            "inv-1".to_string(),
+            token,
+            vec![(alice, U256::from(700)), (bob, U256::from(300))],
+            vec![vk(1), vk(2), vk(3)],
+            2,
+        );
+        vault
+            .with_tokens(U512::from(1000))
+            .fund("inv-1".to_string());
+
+        vault.distribute(
+            "inv-1".to_string(),
+            "c1".to_string(),
+            vec![hash(0xAA), hash(0xBB)],
+            vec![vk(1), vk(2)],
+        );
+
+        let receipt = vault
+            .get_receipt("inv-1".to_string(), "c1".to_string())
+            .expect("receipt after distribute");
+        assert_eq!(receipt.asset_id, "inv-1");
+        assert_eq!(receipt.cycle_id, "c1");
+        assert_eq!(receipt.total_distributed, U512::from(1000));
+        assert_eq!(receipt.dust_retained, U512::zero());
+        assert_eq!(receipt.holder_count, 2);
+        assert_eq!(receipt.quorum_required, 2);
+        assert_eq!(receipt.signers, vec![vk(1), vk(2)]);
+        assert_eq!(receipt.verdict_hashes, vec![hash(0xAA), hash(0xBB)]);
+
+        // Mirrors the event exactly.
+        let event: Distributed = env.get_event(&vault, 0).expect("Distributed event");
+        assert_eq!(event.total, receipt.total_distributed);
+        assert_eq!(event.signers, receipt.signers);
+        assert_eq!(event.verdict_hashes, receipt.verdict_hashes);
+    }
+
+    // R3. dust_retained == pool - paid.
+    #[test]
+    fn receipt_records_dust_retained() {
+        let env = odra_test::env();
+        let token = env.get_account(0);
+        let a = env.get_account(1);
+        let b = env.get_account(2);
+        let c = env.get_account(3);
+        let mut vault = ServicerVault::deploy(&env, NoArgs);
+
+        vault.register_asset(
+            "inv-1".to_string(),
+            token,
+            vec![(a, U256::from(1)), (b, U256::from(1)), (c, U256::from(1))],
+            vec![vk(1), vk(2), vk(3)],
+            2,
+        );
+        vault
+            .with_tokens(U512::from(1000))
+            .fund("inv-1".to_string());
+
+        vault.distribute(
+            "inv-1".to_string(),
+            "c1".to_string(),
+            vec![hash(0xCC), hash(0xDD)],
+            vec![vk(1), vk(2)],
+        );
+
+        let receipt = vault
+            .get_receipt("inv-1".to_string(), "c1".to_string())
+            .expect("receipt");
+        // 1000 / 3 = 333 each -> 999 paid, 1 dust retained.
+        assert_eq!(receipt.total_distributed, U512::from(999));
+        assert_eq!(receipt.dust_retained, U512::from(1));
+        assert_eq!(vault.pool_of("inv-1".to_string()), receipt.dust_retained);
+    }
+
+    // R4. under-quorum revert leaves no receipt (no phantom receipts).
+    #[test]
+    fn receipt_absent_when_quorum_not_met() {
+        let env = odra_test::env();
+        let token = env.get_account(0);
+        let alice = env.get_account(1);
+        let bob = env.get_account(2);
+        let mut vault = ServicerVault::deploy(&env, NoArgs);
+
+        vault.register_asset(
+            "inv-1".to_string(),
+            token,
+            vec![(alice, U256::from(700)), (bob, U256::from(300))],
+            vec![vk(1), vk(2), vk(3)],
+            2,
+        );
+        vault
+            .with_tokens(U512::from(1000))
+            .fund("inv-1".to_string());
+
+        let res = vault.try_distribute(
+            "inv-1".to_string(),
+            "c1".to_string(),
+            vec![hash(0xAA)],
+            vec![vk(1)], // 1 < quorum 2
+        );
+        assert_revert(res, Error::QuorumNotMet);
+
+        // Fraud path wrote nothing.
+        assert!(vault
+            .get_receipt("inv-1".to_string(), "c1".to_string())
+            .is_none());
+    }
+
+    // R5. idempotent re-distribute does not overwrite the receipt.
+    #[test]
+    fn receipt_not_overwritten_on_idempotent_redistribute() {
+        let env = odra_test::env();
+        let token = env.get_account(0);
+        let alice = env.get_account(1);
+        let bob = env.get_account(2);
+        let mut vault = ServicerVault::deploy(&env, NoArgs);
+
+        vault.register_asset(
+            "inv-1".to_string(),
+            token,
+            vec![(alice, U256::from(700)), (bob, U256::from(300))],
+            vec![vk(1), vk(2), vk(3)],
+            2,
+        );
+        vault
+            .with_tokens(U512::from(1000))
+            .fund("inv-1".to_string());
+
+        vault.distribute(
+            "inv-1".to_string(),
+            "c1".to_string(),
+            vec![hash(0xAA), hash(0xBB)],
+            vec![vk(1), vk(2)],
+        );
+        let first = vault
+            .get_receipt("inv-1".to_string(), "c1".to_string())
+            .expect("receipt");
+
+        // Second call, same cycle -> AlreadyDistributed (before any receipt write).
+        let res = vault.try_distribute(
+            "inv-1".to_string(),
+            "c1".to_string(),
+            vec![hash(0xCC), hash(0xDD)], // different hashes must not overwrite
+            vec![vk(1), vk(2)],
+        );
+        assert_revert(res, Error::AlreadyDistributed);
+
+        let after = vault
+            .get_receipt("inv-1".to_string(), "c1".to_string())
+            .expect("receipt still present");
+        assert_eq!(after.verdict_hashes, first.verdict_hashes);
+        assert_eq!(after.verdict_hashes, vec![hash(0xAA), hash(0xBB)]);
+    }
+
+    // R6. distinct cycles produce distinct receipts.
+    #[test]
+    fn distinct_cycles_have_distinct_receipts() {
+        let env = odra_test::env();
+        let token = env.get_account(0);
+        let alice = env.get_account(1);
+        let bob = env.get_account(2);
+        let mut vault = ServicerVault::deploy(&env, NoArgs);
+
+        vault.register_asset(
+            "inv-1".to_string(),
+            token,
+            vec![(alice, U256::from(700)), (bob, U256::from(300))],
+            vec![vk(1), vk(2), vk(3)],
+            2,
+        );
+        vault
+            .with_tokens(U512::from(1000))
+            .fund("inv-1".to_string());
+
+        vault.distribute(
+            "inv-1".to_string(),
+            "c1".to_string(),
+            vec![hash(0xAA), hash(0xBB)],
+            vec![vk(1), vk(2)],
+        );
+        vault
+            .with_tokens(U512::from(1000))
+            .fund("inv-1".to_string());
+        vault.distribute(
+            "inv-1".to_string(),
+            "c2".to_string(),
+            vec![hash(0xCC), hash(0xDD)],
+            vec![vk(2), vk(3)],
+        );
+
+        let r1 = vault
+            .get_receipt("inv-1".to_string(), "c1".to_string())
+            .expect("c1 receipt");
+        let r2 = vault
+            .get_receipt("inv-1".to_string(), "c2".to_string())
+            .expect("c2 receipt");
+        assert_eq!(r1.cycle_id, "c1");
+        assert_eq!(r2.cycle_id, "c2");
+        assert_ne!(r1.signers, r2.signers);
+        assert_ne!(r1.verdict_hashes, r2.verdict_hashes);
     }
 }
