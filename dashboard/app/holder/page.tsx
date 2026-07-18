@@ -1,6 +1,7 @@
-import { getAsset, getCycles } from '@/lib/data';
+import { getAsset, getCycles, distributionReceiptForCycle } from '@/lib/data';
 import { liveBalanceMotes } from '@/lib/chain';
 import { HolderRow } from '@/components/HolderRow';
+import { DistributionReceiptCard } from '@/components/DistributionReceiptCard';
 
 export const dynamic = 'force-dynamic';
 
@@ -28,6 +29,14 @@ export default async function HolderPage() {
           <HolderRow key={r.holder.label} holder={r.holder} receivedMotes={r.received} liveMotes={r.live} distributeTx={happy.distributeTx} />
         ))}
       </div>
+      <section>
+        <div className="font-mono text-[10px] uppercase tracking-[0.25em] text-accent">Distribution receipt</div>
+        <p className="mb-3 mt-1 font-sans text-sm text-muted">
+          The happy cycle&apos;s payout, recorded on chain — queryable via{' '}
+          <code className="font-mono">get_receipt</code>.
+        </p>
+        <DistributionReceiptCard receipt={distributionReceiptForCycle(happy, asset)} />
+      </section>
     </div>
   );
 }

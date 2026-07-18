@@ -1,4 +1,4 @@
-import { getAsset, getCycles } from '@/lib/data';
+import { getAsset, getCycles, distributionReceiptForCycle } from '@/lib/data';
 import { AssetHeader } from '@/components/AssetHeader';
 import { VerifierBadge } from '@/components/VerifierBadge';
 import { CycleCard } from '@/components/CycleCard';
@@ -52,7 +52,11 @@ export default function IssuerPage() {
         </p>
         <div className="grid gap-4 lg:grid-cols-2">
           {cycles.map((c) => (
-            <CycleCard key={c.cycleId} cycle={c} />
+            <CycleCard
+              key={c.cycleId}
+              cycle={c}
+              receipt={c.status === 'distributed' ? distributionReceiptForCycle(c, asset) : undefined}
+            />
           ))}
         </div>
       </section>
