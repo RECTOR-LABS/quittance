@@ -423,3 +423,56 @@ describe("deferred-settlement binding (fake gateway)", () => {
     errorSpy.mockRestore();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Rate limiting (CWE-770 / CodeQL js/missing-rate-limiting)
+//
+// The /verify route is rate-limited ahead of the x402 gate. The default limiter
+// skips in NODE_ENV=test (so the handler tests above never hit it); these tests
+// inject an explicit TIGHT limiter to exercise the 429 path.
+// ---------------------------------------------------------------------------
+import rateLimit from "express-rate-limit";
+
+describe("GET /verify rate limiting (CWE-770)", () => {
+  it("returns 429 once the injected tight limit is exceeded", async () => {
+    const tightLimiter = rateLimit({
+      windowMs: 60_000,
+      max: 2,
+      standardHeaders: true,
+      legacyHeaders: false,
+    });
+    const app = createVerifierApp({
+      verifier: { source: sourceFrom(MATCHING_EVIDENCE), signingKeyHex: freshSigningKeyHex(), label: LABEL },
+      payment: PAYMENT,
+      x402Gate: passThroughGate,
+      rateLimiter: tightLimiter,
+    });
+
+    // First two requests pass the limiter + the pass-through gate -> 200.
+    const r1 = await request(app).get(`/verify?asset=${ASSET_ID}&cycle=${CYCLE_ID}`);
+    const r2 = await request(app).get(`/verify?asset=${ASSET_ID}&cycle=${CYCLE_ID}`);
+    expect(r1.status).toBe(200);
+    expect(r2.status).toBe(200);
+
+    // Third request in the same window is rate-limited -> 429 (never reaches the gate/handler).
+    const r3 = await request(app).get(`/verify?asset=${ASSET_ID}&cycle=${CYCLE_ID}`);
+    expect(r3.status).toBe(429);
+    // Rate-limit headers are present (standard headers).
+    expect(r3.headers["ratelimit-limit"]).toBeDefined();
+  });
+
+  it("a pass-through rateLimiter disables limiting (handler always reached)", async () => {
+    const passThroughLimiter: RequestHandler = (_req, _res, next) => next();
+    const app = createVerifierApp({
+      verifier: { source: sourceFrom(MATCHING_EVIDENCE), signingKeyHex: freshSigningKeyHex(), label: LABEL },
+      payment: PAYMENT,
+      x402Gate: passThroughGate,
+      rateLimiter: passThroughLimiter,
+    });
+
+    for (let i = 0; i < 5; i++) {
+      const res = await request(app).get(`/verify?asset=${ASSET_ID}&cycle=${CYCLE_ID}`);
+      expect(res.status).toBe(200);
+    }
+  });
+});

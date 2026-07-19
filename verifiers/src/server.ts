@@ -6,6 +6,7 @@ import type {
   RequestHandler,
   Response,
 } from "express";
+import rateLimit from "express-rate-limit";
 import {
   HTTPFacilitatorClient,
   x402HTTPResourceServer,
@@ -78,12 +79,38 @@ export interface CreateVerifierAppOptions {
    * from `payment`.
    */
   x402Gate?: RequestHandler;
+  /**
+   * Injectable rate-limit middleware (CWE-770 / CodeQL `js/missing-rate-limiting`).
+   * When provided it is used as-is (tests pass a pass-through, or a tight limiter
+   * to exercise the 429 path). When omitted, a demo-grade in-memory limiter is
+   * applied (100 req / 15 min / IP). The x402 gate is the economic rate limit on
+   * the PAID path; this limiter bounds the unpaid-402 flood surface. Production
+   * would swap in a Redis-backed store.
+   */
+  rateLimiter?: RequestHandler;
 }
 
 const VERIFY_ROUTE = "/verify";
 
 /** Default payment-authorization validity window (seconds). */
 const DEFAULT_MAX_TIMEOUT_SECONDS = 300;
+
+/**
+ * Demo-grade rate limit for the /verify route: 100 requests / 15 min / IP
+ * (CWE-770 / CodeQL `js/missing-rate-limiting`). The x402 payment gate is the
+ * economic rate limit on the paid path; this bounds the unpaid-402 flood
+ * surface. In-memory store (single-process demo); production uses Redis.
+ */
+const defaultVerifyRateLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 100,
+  standardHeaders: true,
+  legacyHeaders: false,
+  // Skip rate-limiting in the test environment so unit tests making many calls
+  // to a fresh app never hit the limit unexpectedly. Tests that exercise the
+  // 429 path inject an explicit tight limiter via `opts.rateLimiter`.
+  skip: () => process.env.NODE_ENV === "test",
+});
 
 type PaymentVerified = Extract<HTTPProcessResult, { type: "payment-verified" }>;
 
@@ -113,7 +140,12 @@ export function createVerifierApp(opts: CreateVerifierAppOptions): Express {
   app.disable("x-powered-by");
 
   const gate = opts.x402Gate ?? buildCasperX402Gate(opts.payment, VERIFY_ROUTE);
-  app.get(VERIFY_ROUTE, gate, makeVerifyHandler(opts));
+  // Rate-limit the /verify route ahead of the x402 gate. The x402 payment is the
+  // economic rate limit on the PAID path (each successful verdict costs real
+  // WCSPR); this limiter bounds the unpaid-402 flood surface (CWE-770). Demo-grade
+  // in-memory store; production swaps in a Redis-backed limiter.
+  const limiter = opts.rateLimiter ?? defaultVerifyRateLimiter;
+  app.get(VERIFY_ROUTE, limiter, gate, makeVerifyHandler(opts));
 
   app.use(
     (err: unknown, _req: Request, res: Response, _next: NextFunction): void => {
