@@ -90,6 +90,51 @@ pub struct VerifierSignature {
     pub signature: Bytes,
 }
 
+/// On-chain reputation for one verifier (SPEC-6 — the unique moat). Auto-
+/// created (zeroed) the first time a verifier is listed in any `register_asset`
+/// call (verifiable on-chain identity from registration); accumulated inside
+/// [`ServicerVault::distribute`] on every **successful** settlement. Global
+/// across all assets — a verifier's reputation is its identity, not per-asset.
+/// Read via [`ServicerVault::get_verifier_reputation`] /
+/// [`ServicerVault::get_verifier_registry`].
+///
+/// Reputation is **informational** — it never gates fund release. The quorum
+/// stays signature-based (SPEC-4). A compromised agent cannot inflate these
+/// counts: they derive from the registered set + the verified signatures, not
+/// from anything the agent reports. The only way to accumulate `cycles_agreed`
+/// is to vote `yes` on a cycle that actually settles.
+#[odra::odra_type]
+pub struct VerifierReputation {
+    pub pubkey: PublicKey,
+    /// Times this verifier was registered for an asset whose cycle settled
+    /// (the opportunity count). Incremented for every registered verifier on
+    /// every successful distribute, responder or not.
+    pub cycles_seen: u32,
+    /// Times this verifier submitted a valid SPEC-4 signature for a settling
+    /// cycle (the response count). `cycles_seen - cycles_voted` = non-response.
+    pub cycles_voted: u32,
+    /// Times this verifier's verdict was `yes` on a settling cycle (agreement
+    /// with the outcome — on a settled cycle, `yes` is the accurate verdict).
+    pub cycles_agreed: u32,
+    /// Most recent verdict this verifier cast on a settling cycle
+    /// (`true` = yes, `false` = no). `None` until first participation.
+    pub last_verdict: Option<bool>,
+    /// Most recent `"{asset_id}:{cycle_id}"` this verifier was scored on.
+    pub last_cycle: Option<String>,
+}
+
+/// A pre-increment snapshot of a verifier's reputation, stored in the
+/// [`Receipt`] (SPEC-6). Captures the track record each verifier **brought
+/// to** a settlement — the basis on which a judge can evaluate the verifiers
+/// *at the moment they voted*, not the post-hoc inflated counts.
+#[odra::odra_type]
+pub struct VerifierScoreSnapshot {
+    pub signer: PublicKey,
+    pub cycles_seen: u32,
+    pub cycles_voted: u32,
+    pub cycles_agreed: u32,
+}
+
 /// Stored on-chain receipt for a settled `(asset_id, cycle_id)` cycle — the
 /// queryable mirror of the [`Distributed`] event (SPEC-1). Records the payout
 /// totals plus the **cryptographically verified** quorum proof (distinct
@@ -114,6 +159,9 @@ pub struct Receipt {
     pub signers: Vec<PublicKey>,
     /// The verified signature records (the on-chain quorum proof, SPEC-4).
     pub verifier_signatures: Vec<VerifierSignature>,
+    /// Pre-increment reputation snapshot per registered verifier (SPEC-6) —
+    /// the track record each verifier brought to this settlement.
+    pub reputation_snapshot: Vec<VerifierScoreSnapshot>,
 }
 
 #[odra::module(errors = Error, events = [Distributed])]
@@ -133,6 +181,15 @@ pub struct ServicerVault {
     /// Same colon-joined key as `distributed`; the queryable mirror of the
     /// [`Distributed`] event. Read via [`ServicerVault::get_receipt`].
     receipts: Mapping<String, Receipt>,
+    /// `PublicKey -> VerifierReputation` (SPEC-6). Global across assets;
+    /// auto-seeded from `register_asset`; accumulated in `distribute()` on
+    /// every successful settlement. Read via [`Self::get_verifier_reputation`].
+    verifier_registry: Mapping<PublicKey, VerifierReputation>,
+    /// First-seen index of registry keys (SPEC-6) so [`Self::get_verifier_registry`]
+    /// can iterate (Odra `Mapping` has no native iterate). Verifier counts are
+    /// tiny (3 in the demo) so a `Var<Vec<PublicKey>>` index is the idiomatic
+    /// pattern — a single stored CLValue holding the key list.
+    verifier_keys: Var<Vec<PublicKey>>,
 }
 
 #[odra::module]
@@ -166,6 +223,30 @@ impl ServicerVault {
             self.env().revert(Error::InvalidQuorum);
         }
 
+        // SPEC-6: seed the global verifier registry with a zeroed entry for each
+        // newly-seen verifier pubkey (verifiable on-chain identity from
+        // registration — Casper example-#2). Done BEFORE `assets.set` moves the
+        // `verifiers` vec, so we iterate it by reference here. A verifier listed
+        // by multiple assets keeps one accumulating entry (idempotent seed).
+        for v in &verifiers {
+            if self.verifier_registry.get(v).is_none() {
+                self.verifier_registry.set(
+                    v,
+                    VerifierReputation {
+                        pubkey: v.clone(),
+                        cycles_seen: 0,
+                        cycles_voted: 0,
+                        cycles_agreed: 0,
+                        last_verdict: None,
+                        last_cycle: None,
+                    },
+                );
+                let mut keys = self.verifier_keys.get_or_default();
+                keys.push(v.clone());
+                self.verifier_keys.set(keys);
+            }
+        }
+
         self.assets.set(
             &asset_id,
             AssetConfig {
@@ -195,6 +276,24 @@ impl ServicerVault {
     pub fn get_receipt(&self, asset_id: String, cycle_id: String) -> Option<Receipt> {
         let key = format!("{asset_id}:{cycle_id}");
         self.receipts.get(&key)
+    }
+
+    /// Read one verifier's on-chain reputation (SPEC-6). `None` if the pubkey
+    /// was never registered. Read-only; no caller gate; no revert.
+    pub fn get_verifier_reputation(&self, pubkey: PublicKey) -> Option<VerifierReputation> {
+        self.verifier_registry.get(&pubkey)
+    }
+
+    /// Read the full verifier registry (SPEC-6) — every verifier ever
+    /// authorized across all assets, with its accumulated track record, in
+    /// first-seen (registration) order. The dashboard renders the reputation
+    /// panel from this. Read-only; no caller gate; no revert.
+    pub fn get_verifier_registry(&self) -> Vec<VerifierReputation> {
+        self.verifier_keys
+            .get_or_default()
+            .iter()
+            .filter_map(|pk| self.verifier_registry.get(pk))
+            .collect()
     }
 
     /// Add attached CSPR to `pools[asset_id]`.
@@ -275,6 +374,13 @@ impl ServicerVault {
         // quorum, `distribute` reverts `QuorumNotMet` and nothing moves.
         let mut verified_signers: Vec<PublicKey> = Vec::new();
         let mut verified_sigs: Vec<VerifierSignature> = Vec::new();
+        // SPEC-6: every distinct verified signer + its verdict (yes OR no), for
+        // reputation scoring. `verified_signers` (yes-only) stays the quorum /
+        // event / receipt-signers set; this superset feeds the per-verifier
+        // score. Deduped on `seen_verified` (first-seen-wins) — a superset of
+        // the yes-only dedup, so the SPEC-4 V1–V10 behavior is unchanged.
+        let mut seen_verified: Vec<PublicKey> = Vec::new();
+        let mut verified_with_verdict: Vec<(PublicKey, bool)> = Vec::new();
         for i in 0..n {
             let signer = &signers[i];
             // (b) REGISTERED.
@@ -282,7 +388,7 @@ impl ServicerVault {
                 continue;
             }
             // (c) DISTINCT — one verified vote per pubkey.
-            if verified_signers.contains(signer) {
+            if seen_verified.contains(signer) {
                 continue;
             }
             // (d) VALID — Ed25519 verify on-chain over the canonical bytes
@@ -300,6 +406,9 @@ impl ServicerVault {
             {
                 continue;
             }
+            seen_verified.push(signer.clone());
+            // SPEC-6: record the verified verdict (yes OR no) for scoring.
+            verified_with_verdict.push((signer.clone(), verdicts[i]));
             // (e) YES — only affirmative verdicts count toward the quorum.
             if verdicts[i] {
                 verified_signers.push(signer.clone());
@@ -345,8 +454,73 @@ impl ServicerVault {
         // 7. Mark this cycle settled.
         self.distributed.set(&key, true);
 
-        // 7b. Store the queryable receipt (SPEC-1) — now carrying the
-        //     cryptographically verified quorum proof (SPEC-4).
+        // 7b. SPEC-6 — on-chain verifier reputation: snapshot (pre-increment)
+        //     then score every registered verifier, then store the receipt with
+        //     the snapshot. Reputation is informational (never gates release);
+        //     the only way to accumulate `cycles_agreed` is to vote `yes` on a
+        //     cycle that actually settles. Non-responders get `cycles_seen` only.
+        //
+        //     Distinct registered verifiers (`cfg.verifiers` may contain dupes;
+        //     score each verifier once, first-seen order).
+        let mut unique_verifiers: Vec<PublicKey> = Vec::new();
+        for v in &cfg.verifiers {
+            if !unique_verifiers.contains(v) {
+                unique_verifiers.push(v.clone());
+            }
+        }
+        // (1) SNAPSHOT — the track record each verifier brought to this cycle
+        //     (pre-increment), so a receipt shows the basis on which the
+        //     verifiers can be evaluated *at the moment they voted*.
+        let reputation_snapshot: Vec<VerifierScoreSnapshot> = unique_verifiers
+            .iter()
+            .map(|v| {
+                let rep = self.verifier_registry.get(v).unwrap_or_else(|| {
+                    VerifierReputation {
+                        pubkey: v.clone(),
+                        cycles_seen: 0,
+                        cycles_voted: 0,
+                        cycles_agreed: 0,
+                        last_verdict: None,
+                        last_cycle: None,
+                    }
+                });
+                VerifierScoreSnapshot {
+                    signer: v.clone(),
+                    cycles_seen: rep.cycles_seen,
+                    cycles_voted: rep.cycles_voted,
+                    cycles_agreed: rep.cycles_agreed,
+                }
+            })
+            .collect();
+        // (2) SCORE — increment each registered verifier. A verifier that
+        //     submitted a verified signature (yes or no) is a responder; a
+        //     `yes` on a settling cycle is an agreement.
+        for v in &unique_verifiers {
+            let mut rep = self.verifier_registry.get(v).unwrap_or_else(|| {
+                VerifierReputation {
+                    pubkey: v.clone(),
+                    cycles_seen: 0,
+                    cycles_voted: 0,
+                    cycles_agreed: 0,
+                    last_verdict: None,
+                    last_cycle: None,
+                }
+            });
+            rep.cycles_seen += 1;
+            if let Some((_, verdict)) = verified_with_verdict.iter().find(|(p, _)| *p == *v) {
+                rep.cycles_voted += 1;
+                rep.last_verdict = Some(*verdict);
+                rep.last_cycle = Some(key.clone());
+                if *verdict {
+                    rep.cycles_agreed += 1;
+                }
+            }
+            self.verifier_registry.set(v, rep);
+        }
+
+        // 7c. Store the queryable receipt (SPEC-1) — now carrying the
+        //     cryptographically verified quorum proof (SPEC-4) + the
+        //     pre-increment reputation snapshot (SPEC-6).
         self.receipts.set(
             &key,
             Receipt {
@@ -359,6 +533,7 @@ impl ServicerVault {
                 quorum_required: cfg.quorum,
                 signers: verified_signers.clone(),
                 verifier_signatures: verified_sigs.clone(),
+                reputation_snapshot,
             },
         );
 
@@ -1167,5 +1342,277 @@ mod tests {
         assert_eq!(r2.cycle_id, "c2");
         assert_ne!(r1.signers, r2.signers);
         assert_ne!(r1.verifier_signatures, r2.verifier_signatures);
+    }
+
+    // ---- SPEC-6: on-chain verifier reputation (RP1–RP10) ---------------
+
+    // RP1. register_asset seeds zeroed registry entries (identity from
+    // registration); get_verifier_registry lists them in first-seen order.
+    #[test]
+    fn register_seeds_zeroed_verifier_reputation() {
+        let env = odra_test::env();
+        let token = env.get_account(0);
+        let alice = env.get_account(1);
+        let mut vault = ServicerVault::deploy(&env, NoArgs);
+        vault.register_asset(
+            "inv-1".to_string(),
+            token,
+            vec![(alice, U256::from(1))],
+            vec![vk(1), vk(2), vk(3)],
+            2,
+        );
+        // Each registered verifier has a zeroed reputation entry — identity
+        // exists from registration (Casper example-#2).
+        for seed in [1u8, 2, 3] {
+            let rep = vault.get_verifier_reputation(vk(seed)).expect("seeded");
+            assert_eq!(rep.pubkey, vk(seed));
+            assert_eq!((rep.cycles_seen, rep.cycles_voted, rep.cycles_agreed), (0, 0, 0));
+            assert!(rep.last_verdict.is_none());
+            assert!(rep.last_cycle.is_none());
+        }
+        let registry = vault.get_verifier_registry();
+        assert_eq!(registry.len(), 3);
+        assert_eq!(registry[0].pubkey, vk(1));
+        assert_eq!(registry[1].pubkey, vk(2));
+        assert_eq!(registry[2].pubkey, vk(3));
+    }
+
+    // RP2. happy distribute (3 yes): all 3 registered verifiers get
+    // seen+1, voted+1, agreed+1; last_verdict == Some(true).
+    #[test]
+    fn reputation_accumulates_on_happy_distribute() {
+        let env = odra_test::env();
+        let (mut vault, _alice, _bob) = funded_vault(&env);
+        let (s, v, sg, o, sr) = happy_evidence();
+        vault.distribute("inv-1".to_string(), "c1".to_string(), s, v, sg, o, sr);
+        for seed in [1u8, 2, 3] {
+            let rep = vault.get_verifier_reputation(vk(seed)).expect("rep");
+            assert_eq!((rep.cycles_seen, rep.cycles_voted, rep.cycles_agreed), (1, 1, 1),
+                "seed {}", seed);
+            assert_eq!(rep.last_verdict, Some(true));
+            assert_eq!(rep.last_cycle.as_deref(), Some("inv-1:c1"));
+        }
+    }
+
+    // RP3. 2 yes + 1 valid-signed no (quorum met): all 3 seen+1; the 2 yes
+    // voted+1 agreed+1; the no-voter voted+1 agreed+0, last_verdict Some(false).
+    #[test]
+    fn reputation_scores_no_voter_as_disagreeing() {
+        let env = odra_test::env();
+        let (mut vault, _alice, _bob) = funded_vault(&env);
+        let (s, v, sg, o, sr) = signed_arrays(
+            "inv-1",
+            "c1",
+            &[(1, true, "1000", "bank-api"), (2, true, "1000", "stripe"), (3, false, "0", "ledger")],
+        );
+        vault.distribute("inv-1".to_string(), "c1".to_string(), s, v, sg, o, sr);
+
+        let yes1 = vault.get_verifier_reputation(vk(1)).unwrap();
+        assert_eq!((yes1.cycles_seen, yes1.cycles_voted, yes1.cycles_agreed), (1, 1, 1));
+        assert_eq!(yes1.last_verdict, Some(true));
+
+        let no3 = vault.get_verifier_reputation(vk(3)).unwrap();
+        assert_eq!((no3.cycles_seen, no3.cycles_voted, no3.cycles_agreed), (1, 1, 0));
+        assert_eq!(no3.last_verdict, Some(false));
+    }
+
+    // RP4. 2 yes + 1 non-responder (only 2 signers submitted): all 3 seen+1;
+    // 2 responders voted+1 agreed+1; non-responder voted+0 agreed+0, last_verdict None.
+    #[test]
+    fn reputation_records_non_responder_as_seen_only() {
+        let env = odra_test::env();
+        let (mut vault, _alice, _bob) = funded_vault(&env);
+        let (s, v, sg, o, sr) =
+            signed_arrays("inv-1", "c1", &[(1, true, "1000", "bank-api"), (2, true, "1000", "stripe")]);
+        vault.distribute("inv-1".to_string(), "c1".to_string(), s, v, sg, o, sr);
+
+        let r1 = vault.get_verifier_reputation(vk(1)).unwrap();
+        assert_eq!((r1.cycles_seen, r1.cycles_voted, r1.cycles_agreed), (1, 1, 1));
+
+        let nr = vault.get_verifier_reputation(vk(3)).unwrap();
+        assert_eq!((nr.cycles_seen, nr.cycles_voted, nr.cycles_agreed), (1, 0, 0));
+        assert!(nr.last_verdict.is_none());
+        assert!(nr.last_cycle.is_none());
+    }
+
+    // RP5. get_verifier_reputation returns accumulated stats; get_verifier_registry
+    // lists all in first-seen order with accumulated counts.
+    #[test]
+    fn get_verifier_registry_lists_all_first_seen_order() {
+        let env = odra_test::env();
+        let (mut vault, _alice, _bob) = funded_vault(&env);
+        let (s, v, sg, o, sr) = happy_evidence();
+        vault.distribute("inv-1".to_string(), "c1".to_string(), s, v, sg, o, sr);
+
+        let registry = vault.get_verifier_registry();
+        assert_eq!(registry.len(), 3);
+        assert_eq!(registry[0].pubkey, vk(1));
+        assert_eq!(registry[1].pubkey, vk(2));
+        assert_eq!(registry[2].pubkey, vk(3));
+        assert_eq!(registry[0].cycles_agreed, 1);
+    }
+
+    // RP6. Receipt.reputation_snapshot == registry state BEFORE this cycle's
+    // increment (the track record brought to this settlement).
+    #[test]
+    fn receipt_reputation_snapshot_is_pre_increment() {
+        let env = odra_test::env();
+        let (mut vault, _alice, _bob) = funded_vault(&env);
+
+        // First settle: snapshot is all-zero (pre-increment).
+        let (s, v, sg, o, sr) = happy_evidence();
+        vault.distribute("inv-1".to_string(), "c1".to_string(), s, v, sg, o, sr);
+        let r1 = vault
+            .get_receipt("inv-1".to_string(), "c1".to_string())
+            .expect("c1 receipt");
+        assert_eq!(r1.reputation_snapshot.len(), 3);
+        for snap in &r1.reputation_snapshot {
+            assert_eq!((snap.cycles_seen, snap.cycles_voted, snap.cycles_agreed), (0, 0, 0),
+                "first-cycle snapshot must be pre-increment (zero)");
+        }
+
+        // Second settle (c2): snapshot reflects post-c1 / pre-c2 counts (1,1,1).
+        vault.with_tokens(U512::from(1000)).fund("inv-1".to_string());
+        let (s2, v2, sg2, o2, sr2) =
+            signed_arrays("inv-1", "c2", &[(1, true, "1000", "bank-api"), (2, true, "1000", "stripe")]);
+        vault.distribute("inv-1".to_string(), "c2".to_string(), s2, v2, sg2, o2, sr2);
+        let r2 = vault
+            .get_receipt("inv-1".to_string(), "c2".to_string())
+            .expect("c2 receipt");
+        let snap_v1 = r2
+            .reputation_snapshot
+            .iter()
+            .find(|s| s.signer == vk(1))
+            .expect("vk(1) in c2 snapshot");
+        assert_eq!((snap_v1.cycles_seen, snap_v1.cycles_voted, snap_v1.cycles_agreed), (1, 1, 1));
+        // Live registry is now incremented for c2 too.
+        let rep = vault.get_verifier_reputation(vk(1)).unwrap();
+        assert_eq!((rep.cycles_seen, rep.cycles_voted, rep.cycles_agreed), (2, 2, 2));
+    }
+
+    // RP7. halted/fraud cycle (1 yes -> QuorumNotMet revert) does NOT update
+    // any reputation (the honest-limitation proof: halted cycles don't score).
+    #[test]
+    fn halted_cycle_does_not_score_reputation() {
+        let env = odra_test::env();
+        let (mut vault, _alice, _bob) = funded_vault(&env);
+        let (s, v, sg, o, sr) = signed_arrays("inv-1", "c1", &[(1, true, "1000", "bank-api")]);
+        let res = vault.try_distribute("inv-1".to_string(), "c1".to_string(), s, v, sg, o, sr);
+        assert_revert(res, Error::QuorumNotMet);
+
+        // Reputation untouched — the contract does not score halted cycles.
+        for seed in [1u8, 2, 3] {
+            let rep = vault.get_verifier_reputation(vk(seed)).unwrap();
+            assert_eq!((rep.cycles_seen, rep.cycles_voted, rep.cycles_agreed), (0, 0, 0));
+            assert!(rep.last_verdict.is_none());
+        }
+    }
+
+    // RP8. two sequential successful distributes accumulate (counts grow).
+    #[test]
+    fn reputation_accumulates_across_sequential_cycles() {
+        let env = odra_test::env();
+        let (mut vault, _alice, _bob) = funded_vault(&env);
+
+        let (s, v, sg, o, sr) =
+            signed_arrays("inv-1", "c1", &[(1, true, "1000", "bank-api"), (2, true, "1000", "stripe")]);
+        vault.distribute("inv-1".to_string(), "c1".to_string(), s, v, sg, o, sr);
+        vault.with_tokens(U512::from(1000)).fund("inv-1".to_string());
+        let (s2, v2, sg2, o2, sr2) =
+            signed_arrays("inv-1", "c2", &[(1, true, "1000", "bank-api"), (2, true, "1000", "stripe")]);
+        vault.distribute("inv-1".to_string(), "c2".to_string(), s2, v2, sg2, o2, sr2);
+
+        let rep = vault.get_verifier_reputation(vk(1)).unwrap();
+        assert_eq!((rep.cycles_seen, rep.cycles_voted, rep.cycles_agreed), (2, 2, 2));
+        // vk(3) was registered for both cycles but never submitted -> seen only.
+        let rep3 = vault.get_verifier_reputation(vk(3)).unwrap();
+        assert_eq!((rep3.cycles_seen, rep3.cycles_voted, rep3.cycles_agreed), (2, 0, 0));
+    }
+
+    // RP9. a verifier shared across two assets has ONE accumulating registry
+    // entry (global registry, cross-asset).
+    #[test]
+    fn reputation_registry_is_global_across_assets() {
+        let env = odra_test::env();
+        let token = env.get_account(0);
+        let alice = env.get_account(1);
+        let bob = env.get_account(2);
+        let mut vault = ServicerVault::deploy(&env, NoArgs);
+
+        vault.register_asset(
+            "inv-1".to_string(),
+            token,
+            vec![(alice, U256::from(700)), (bob, U256::from(300))],
+            vec![vk(1), vk(2), vk(3)],
+            2,
+        );
+        // inv-2 shares vk(1) and adds vk(4), vk(5).
+        vault.register_asset(
+            "inv-2".to_string(),
+            token,
+            vec![(alice, U256::from(1))],
+            vec![vk(1), vk(4), vk(5)],
+            2,
+        );
+        vault.with_tokens(U512::from(1000)).fund("inv-1".to_string());
+        vault.with_tokens(U512::from(1000)).fund("inv-2".to_string());
+
+        let (s, v, sg, o, sr) = signed_arrays(
+            "inv-1", "c1",
+            &[(1, true, "1000", "bank-api"), (2, true, "1000", "stripe"), (3, true, "1000", "ledger")],
+        );
+        vault.distribute("inv-1".to_string(), "c1".to_string(), s, v, sg, o, sr);
+        let (s2, v2, sg2, o2, sr2) =
+            signed_arrays("inv-2", "c1", &[(1, true, "1000", "bank-api"), (4, true, "1000", "stripe")]);
+        vault.distribute("inv-2".to_string(), "c1".to_string(), s2, v2, sg2, o2, sr2);
+
+        // vk(1) is the shared verifier — ONE entry accumulating both settles.
+        let rep = vault.get_verifier_reputation(vk(1)).unwrap();
+        assert_eq!((rep.cycles_seen, rep.cycles_voted, rep.cycles_agreed), (2, 2, 2));
+        assert_eq!(rep.last_cycle.as_deref(), Some("inv-2:c1")); // most recent
+        // vk(2) only settled inv-1.
+        let rep2 = vault.get_verifier_reputation(vk(2)).unwrap();
+        assert_eq!((rep2.cycles_seen, rep2.cycles_voted, rep2.cycles_agreed), (1, 1, 1));
+        // Registry has 5 entries (vk1..vk5), first-seen order.
+        let registry = vault.get_verifier_registry();
+        assert_eq!(registry.len(), 5);
+        assert_eq!(registry[0].pubkey, vk(1));
+    }
+
+    // RP10. an unregistered-but-validly-signing pubkey (rejected by SPEC-4) is
+    // NOT scored; its reputation stays None; distribute succeeds if registered
+    // quorum met.
+    #[test]
+    fn unregistered_signer_is_not_scored() {
+        let env = odra_test::env();
+        let token = env.get_account(0);
+        let alice = env.get_account(1);
+        let bob = env.get_account(2);
+        let mut vault = ServicerVault::deploy(&env, NoArgs);
+        vault.register_asset(
+            "inv-1".to_string(),
+            token,
+            vec![(alice, U256::from(700)), (bob, U256::from(300))],
+            vec![vk(1), vk(2), vk(3)],
+            2,
+        );
+        vault.with_tokens(U512::from(1000)).fund("inv-1".to_string());
+
+        // vk(99) is unregistered but signs validly; vk(1), vk(2) are registered yes.
+        // The distribute succeeds (registered quorum met); vk(99) is rejected by
+        // the SPEC-4 gate (not registered) and is NOT scored.
+        let (s, v, sg, o, sr) = signed_arrays(
+            "inv-1", "c1",
+            &[(1, true, "1000", "bank-api"), (2, true, "1000", "stripe"), (99, true, "1000", "rogue")],
+        );
+        vault.distribute("inv-1".to_string(), "c1".to_string(), s, v, sg, o, sr);
+
+        // vk(99) has no registry entry (never registered -> never seeded -> never scored).
+        assert!(vault.get_verifier_reputation(vk(99)).is_none());
+        // vk(3) was registered but didn't submit (vk(99) took the 3rd slot) -> seen only.
+        let rep3 = vault.get_verifier_reputation(vk(3)).unwrap();
+        assert_eq!((rep3.cycles_seen, rep3.cycles_voted, rep3.cycles_agreed), (1, 0, 0));
+        let rep1 = vault.get_verifier_reputation(vk(1)).unwrap();
+        assert_eq!((rep1.cycles_seen, rep1.cycles_voted, rep1.cycles_agreed), (1, 1, 1));
     }
 }
