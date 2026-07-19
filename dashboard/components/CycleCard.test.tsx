@@ -7,7 +7,7 @@ const cycles = getCycles();
 
 describe('CycleCard', () => {
   it('happy cycle shows DISTRIBUTE + payouts', () => {
-    render(<CycleCard cycle={cycles.find((c) => c.cycleId === 'happy')!} />);
+    render(<CycleCard cycle={cycles.find((c) => c.cycleId === 'happy2')!} />);
     expect(screen.getByText(/DISTRIBUTE/i)).toBeInTheDocument();
     expect(screen.getByText('Holder A')).toBeInTheDocument();
     expect(screen.getByText(/\+7\s*CSPR/)).toBeInTheDocument();

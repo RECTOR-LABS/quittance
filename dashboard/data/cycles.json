@@ -1,6 +1,6 @@
 [
   {
-    "cycleId": "happy",
+    "cycleId": "happy2",
     "status": "distributed",
     "verdicts": [
       { "source": "v1", "verdict": "yes", "observedAmount": "1000000000000", "signer": "21423f386b2700fe0cc65a5bb3bbb8dcadfa1dac6abe89b51f23b0af72c72892", "signature": "72ecebe53306f76b7e9e1e46861893041a52da04b29cc63e876be68d8e36f361150d304a3c40919174199a66bca3ed6cf2faacf123e7f0659bfcab27f0b29400" },

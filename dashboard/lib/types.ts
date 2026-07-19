@@ -107,7 +107,7 @@ export interface Payout {
 }
 
 export interface Cycle {
-  cycleId: 'happy' | 'fraud';
+  cycleId: 'happy2' | 'fraud';
   status: 'distributed' | 'halted';
   reason?: string;
   verdicts: Verdict[];

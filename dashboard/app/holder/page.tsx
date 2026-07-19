@@ -8,7 +8,7 @@ export const dynamic = 'force-dynamic';
 export default async function HolderPage() {
   const asset = getAsset();
   const cycles = getCycles();
-  const happy = cycles.find((c) => c.cycleId === 'happy')!;
+  const happy = cycles.find((c) => c.cycleId === 'happy2')!;
   const rows = await Promise.all(
     asset.holders.map(async (h) => ({
       holder: h,

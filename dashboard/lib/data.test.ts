@@ -12,7 +12,7 @@ describe('data ledger', () => {
   });
   it('loads cycles with derived quorum matching verdicts', () => {
     const cycles = getCycles();
-    const happy = cycles.find((c) => c.cycleId === 'happy')!;
+    const happy = cycles.find((c) => c.cycleId === 'happy2')!;;
     const fraud = cycles.find((c) => c.cycleId === 'fraud')!;
     expect(happy.quorum.yesCount).toBe(happy.verdicts.filter((v) => v.verdict === 'yes').length);
     expect(happy.quorum.met).toBe(true);
@@ -36,7 +36,7 @@ describe('verifierRegistryFromCommitted (SPEC-6)', () => {
       expect(r.cyclesVoted).toBe(1);
       expect(r.cyclesAgreed).toBe(1);
       expect(r.lastVerdict).toBe('yes'); // the happy cycle's verdict
-      expect(r.lastCycle).toBe('happy');
+      expect(r.lastCycle).toBe('happy2');
     }
   });
 });
@@ -45,7 +45,7 @@ describe('distributionReceiptForCycle reputation snapshot (SPEC-6)', () => {
   it('happy cycle snapshot is pre-increment (zero — first distributed cycle)', () => {
     const asset = getAsset();
     const cycles = getCycles();
-    const happy = cycles.find((c) => c.cycleId === 'happy')!;
+    const happy = cycles.find((c) => c.cycleId === 'happy2')!;
     const receipt = distributionReceiptForCycle(happy, asset, cycles);
     expect(receipt.reputationSnapshot).toHaveLength(3);
     for (const s of receipt.reputationSnapshot) {
