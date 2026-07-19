@@ -218,12 +218,13 @@ export async function runCycle(
     brief = undefined;
   }
 
-  return {
+  const outcome: CycleOutcome = {
     status: "distributed",
     distributeTx: deployResult.txHash,
-    brief,
     receipts,
     verdicts,
     errors,
   };
+  if (brief !== undefined) outcome.brief = brief;
+  return outcome;
 }
