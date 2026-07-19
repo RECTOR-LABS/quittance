@@ -1,11 +1,11 @@
 # Quittance — Roadmap
 
 > **The path from a testnet buildathon demo to a mainnet trust layer for RWA servicing.**
-> The final-round campaign (SPEC-1/4/5/6) is built and tested on `feat/spec-1-receipts`; this roadmap is the honest path from here to production. See [`README.md`](./README.md) for what's built today.
+> The final-round campaign (SPEC-1/4/5/6 + the SPEC-2 bonus) is built, deployed, and proven on `casper-test`; this roadmap is the honest path from here to production. See [`README.md`](./README.md) for what's built today.
 
 ---
 
-## Now — final-round campaign (built, tested, pending testnet deploy)
+## Now — final-round campaign (built, deployed, proven on casper-test)
 
 - **On-chain signature verification (SPEC-4, L3)** — `distribute()` verifies each Ed25519 verdict signature on-chain; forged/replayed/unregistered sigs rejected by the chain. Strongest on-chain verification in the finalist field.
 - **On-chain verifier reputation (SPEC-6, the moat)** — per-verifier `cycles_seen`/`voted`/`agreed`, queryable via `get_verifier_registry`. Maps to Casper example-direction-#2.
@@ -15,7 +15,7 @@
 - **Real payment-rail adapter (SPEC-2, optional bonus)** — one verifier can read **Stripe test mode** instead of a fixture (`VERIFIER_SOURCE=stripe`). Unit-tested with an injectable `fetch`; the default demo keeps mocked fixtures for reproducibility; the live e2e against Stripe test mode runs with a test-mode key. Closes the "mocked evidence" disclosure for one of three verifiers.
 - **Testnet only.** 3 single-operator verifiers; mocked off-chain evidence by default (SPEC-2 upgrades one); WCSPR/test-CSPR.
 
-**Pending (RECTOR's gate):** the bundled testnet deploy (new contract hash + e2e smoke incl. cross-side TS-sign→Rust-verify byte-consistency + the SPEC-3 tail: README hashes + BUIDL sample txs), then merge to `main`. SPEC-2 is additive to the verifier service only — no contract change, no redeploy.
+**Deployed + merged to `main`:** the v2 contract is live on `casper-test` (entity `753a16ea…4d61d7`, package `6356f9d4…`). The full agent→x402→verifiers→quorum→`distribute()` path is proven on **both** cycles — happy (3/3 → holders +7/+3 CSPR, distribute `b94e0d4f`) and fraud (1/3 → halt, holders unchanged, 3 real x402 settles). The cross-side TS-sign→Rust-verify byte consistency is confirmed on a real Casper host. SPEC-2 (Stripe rail adapter) is merged; the default demo keeps mocked fixtures for reproducibility, the Stripe rail is exercised with a test-mode key. No further contract deploy needed.
 
 ---
 

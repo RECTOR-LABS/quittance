@@ -132,18 +132,36 @@ The final-round contract carries the full moat stack: **on-chain Ed25519 signatu
 | --- | --- | --- | --- |
 | `ServicerVault` v2 deployed | 1/4/5/6 | entity `753a16ea…4d61d7` (337.69 CSPR install) | [`66d3afb3…067c9`](https://testnet.cspr.live/deploy/66d3afb32f28d84f36ccf89b3d6be3dd863eb2c5a76e01e10210e19527f067c9) |
 | register_asset(inv-001) | — | 3 verifiers, 2 holders, quorum 2 | [`19adc747…96764`](https://testnet.cspr.live/deploy/19adc74733302931019b423d45f1819d914a92d43cf20d5d44b5575693496764) |
-| fund pool (10 CSPR) | — | pool funded | [`4c8f877b…8383f`](https://testnet.cspr.live/deploy/4c8f877bdb4d3115852a378694e9eb585cd30199762396749962217257c8383f) |
-| **distribute(happy)** | **4** | **contract verified 3 TS-signed Ed25519 sigs ON-CHAIN → holders +7/+3 CSPR** (8.51 CSPR gas) | [`e6fbfb83…66e68`](https://testnet.cspr.live/deploy/e6fbfb83174f15544c860f30068f1ec797a11b3f101dcc1e655b88ee2b666e68) |
+| fund pool (10 CSPR) | — | pool funded (re-funded for the full-x402 proof: [`22db74f2…4fae4`](https://testnet.cspr.live/deploy/22db74f2c27265b7c44a3b42831dc8c5260fc3122ce889f4e53f5614f3c4fae4)) | [`4c8f877b…8383f`](https://testnet.cspr.live/deploy/4c8f877bdb4d3115852a378694e9eb585cd30199762396749962217257c8383f) |
+| **distribute (direct, L3 proof)** | **4** | contract verified 3 TS-signed Ed25519 sigs ON-CHAIN → holders +7/+3 CSPR (8.51 CSPR gas) | [`e6fbfb83…66e68`](https://testnet.cspr.live/deploy/e6fbfb83174f15544c860f30068f1ec797a11b3f101dcc1e655b88ee2b666e68) |
 | record_brief(happy) | **5** | **AI verification brief stored on-chain** | [`1ff73ae2…4f618`](https://testnet.cspr.live/deploy/1ff73ae2c01204c8a5de12cef7609c423696d64a1a54632204e101d8c9c4f618) |
 
-**The cross-side proof that matters:** the `distribute(happy)` tx proves the TS-side `canonicalBytes` signing (in the verifier, `@noble/ed25519`) is verified byte-for-byte by the Rust-side `canonical_bytes` reconstruction + `env().verify_signature` on the **real Casper host** — the one open e2e risk, closed. The qualifier table above is the L0 build (agent attests); this v2 table is the L3 build (chain verifies).
+**Full agent→x402→distribute loop (proven on a fresh `happy2` cycle, since `happy` was already distributed above):** the agent pays 3 verifiers over x402 (real WCSPR settles), collects 3 signed yes-verdicts, and the contract verifies each signature on-chain + pays holders pro-rata — the complete rail, not a direct call.
+
+| Event | SPEC | Result | Transaction |
+| --- | --- | --- | --- |
+| x402 settle · v1 (happy2) | — | real verifier payment | [`939dba12…99c4`](https://testnet.cspr.live/deploy/939dba127ddf4cacf444206872d560ac582f9922b62516c63e9dd18e9f7799c4) |
+| x402 settle · v2 (happy2) | — | real verifier payment | [`e92a84ad…9ba66`](https://testnet.cspr.live/deploy/e92a84add3e92a729b354d3d002a4db4f42f715bc3f7949ca6d004f5b859ba66) |
+| x402 settle · v3 (happy2) | — | real verifier payment | [`bab83f8e…a351a`](https://testnet.cspr.live/deploy/bab83f8e33ad5362e5c8b358b757871c707555b201018547265b4fe298fa351a) |
+| **distribute(happy2)** | **4** | **3 x402-paid yes-verdicts → on-chain sig verify → holders +7/+3 CSPR** | [`b94e0d4f…3d31c`](https://testnet.cspr.live/deploy/b94e0d4f0c1265dcf81888781d8c98da729f75fb33f204a20721306e5e13d31c) |
+
+**Fraud halt on v2 (1/3 → no quorum → funds withheld, holders unchanged):**
+
+| Event | Result | Transaction |
+| --- | --- | --- |
+| x402 settle · v1 (fraud) | agent paid, v1 lied "yes" | [`974544fa…ed6a`](https://testnet.cspr.live/deploy/974544fabd558e03a7739bd3f052f896bb129b130d0f5f271c8628599d48ed6a) |
+| x402 settle · v2 (fraud) | agent paid, v2 honest "no" | [`f6726bd7…8c19`](https://testnet.cspr.live/deploy/f6726bd7a09919c2fc7ed8d17c0d605fb25a462209646e20763540863b598c19) |
+| x402 settle · v3 (fraud) | agent paid, v3 honest "no" | [`fac7e71e…2f3b2c`](https://testnet.cspr.live/deploy/fac7e71e810f8e58d3188a8c52aceb66d0beb3298738e5dcd0e09e91da2f3b2c) |
+| **halt** | 1/3 → `QuorumNotMet` → no distribute, holders unchanged | (no distribute tx — that's the point) |
+
+**The cross-side proof that matters:** the `distribute` txs prove the TS-side `canonicalBytes` signing (in the verifier, `@noble/ed25519`) is verified byte-for-byte by the Rust-side `canonical_bytes` reconstruction + `env().verify_signature` on the **real Casper host** — the one open e2e risk, closed. `e6fbfb83` is the direct-distribute L3 proof; `b94e0d4f` is the full agent→x402→distribute proof. The qualifier table above is the L0 build (agent attests); the v2 tables are the L3 build (chain verifies).
 
 ## See it live
 
 | | |
 | --- | --- |
 | 🟢 **Live dashboard** | **[quittance.rectorspace.com](https://quittance.rectorspace.com)** — issuer view (asset + both cycle histories) |
-| 👛 **Holder view** | [quittance.rectorspace.com/holder](https://quittance.rectorspace.com/holder) — balances read **live from chain** (7 / 3 CSPR, unchanged) |
+| 👛 **Holder view** | [quittance.rectorspace.com/holder](https://quittance.rectorspace.com/holder) — balances read **live from chain** (Holder A 21 CSPR · Holder B 9 CSPR — reflecting the v2 happy cycle's +7/+3 payout on top of prior demo cycles) |
 | 🎬 **Demo video** | [quittance.rectorspace.com/demo](https://quittance.rectorspace.com/demo) (~2 min) |
 
 ## Architecture
