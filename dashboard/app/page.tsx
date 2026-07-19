@@ -18,6 +18,15 @@ export default function IssuerPage() {
           Funds reach holders only after an independent quorum confirms the cashflow arrived.
         </h1>
         <p className="mt-2 font-mono text-xs uppercase tracking-[0.18em] text-muted">verify, not attest</p>
+        <p className="mt-3 max-w-2xl font-sans text-sm text-muted">
+          The contract verifies the quorum <b className="text-foreground">on-chain</b> · verifiers carry{' '}
+          <b className="text-foreground">on-chain reputation</b> · the AI explains — the chain decides.
+        </p>
+        <p className="mt-2 max-w-2xl font-sans text-xs text-muted">
+          Verifiers are paid per-call over{' '}
+          <a href="https://x402.org" className="text-accent underline" target="_blank" rel="noopener noreferrer">x402</a>,
+          settled on Casper — real economic commitment for every verdict.
+        </p>
       </section>
 
       <AssetHeader asset={asset} />
