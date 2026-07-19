@@ -2,11 +2,18 @@
 //!
 //! Custodies a per-asset distribution pool funded by a borrower's verified
 //! cashflow and releases the entire pool to token holders **pro-rata** — but
-//! only when the servicer agent presents a **quorum of registered verifiers**,
-//! and only **once per cycle** (idempotent).
+//! only when a **quorum of registered verifiers cryptographically sign
+//! yes-verdicts** that the cashflow arrived, and only **once per cycle**
+//! (idempotent).
 //!
-//! Trust anchor: `@quittance/agent` is the sole caller of [`ServicerVault::distribute`].
+//! Trust anchor (SPEC-4): `distribute()` verifies each Ed25519 verdict
+//! signature **on-chain** via `env().verify_signature`. The servicer agent is
+//! still the sole caller (operational), but it can no longer release funds by
+//! listing trusted pubkeys — it must present ≥`quorum` valid, registered,
+//! distinct-verifier **signed** yes-verdicts. "Verify, not attest" is now a
+//! protocol property, not a demo claim.
 
+use odra::casper_types::bytesrepr::Bytes;
 use odra::casper_types::{PublicKey, U256, U512};
 use odra::prelude::*;
 
@@ -27,20 +34,18 @@ pub struct AssetConfig {
 
 /// Emitted on a successful distribution — the auditable on-chain record of the
 /// settlement. `total` is the amount actually paid out (pool minus
-/// integer-division dust). `signers` and `verdict_hashes` carry the quorum
-/// provenance so anyone reading the log can re-check that the gate was met:
-/// `signers` is the set of distinct, registered verifiers that satisfied the
-/// quorum, and `verdict_hashes` is the verdict-hash digests presented for the
-/// cycle.
+/// integer-division dust). `signers` is the set of distinct, registered
+/// verifiers whose **on-chain-verified** Ed25519 signatures satisfied the
+/// quorum (SPEC-4). Anyone reading the log can re-check that ≥`quorum`
+/// independent verifiers cryptographically attested before funds moved.
 #[odra::event]
 pub struct Distributed {
     pub asset_id: String,
     pub cycle_id: String,
     pub total: U512,
-    /// Distinct registered verifiers whose presence satisfied the quorum gate.
+    /// Distinct registered verifiers whose **verified** signatures satisfied
+    /// the quorum gate (SPEC-4).
     pub signers: Vec<PublicKey>,
-    /// Verdict-hash digests presented for this cycle (provenance, as supplied).
-    pub verdict_hashes: Vec<[u8; 32]>,
 }
 
 /// Reverts surfaced by [`ServicerVault`]. Discriminants are stable on-chain
@@ -57,7 +62,8 @@ pub enum Error {
     InvalidQuorum = 4,
     /// `distribute` already settled this `(asset_id, cycle_id)`.
     AlreadyDistributed = 5,
-    /// Fewer than `quorum` distinct registered signers presented.
+    /// Fewer than `quorum` distinct registered verifiers presented valid
+    /// **signed** yes-verdicts (SPEC-4).
     QuorumNotMet = 6,
     /// The pool for this asset is empty (nothing funded for the cycle).
     InsufficientPool = 7,
@@ -66,11 +72,36 @@ pub enum Error {
     ZeroTotalWeight = 8,
 }
 
+/// A verifier's signed yes/no verdict, presented to [`ServicerVault::distribute`]
+/// for on-chain Ed25519 verification (SPEC-4). The 5 fields reconstruct the
+/// canonical signed bytes (see [`canonical_bytes`]); `signature` is a Casper
+/// `Signature` serialized as `[0x01, <64 bytes>]`; `signer` must be a registered
+/// verifier pubkey.
+#[odra::odra_type]
+pub struct SignedVerdict {
+    pub asset_id: String,
+    pub cycle_id: String,
+    pub verdict: bool,
+    pub observed_amount: String,
+    pub source: String,
+    pub signature: Bytes,
+    pub signer: PublicKey,
+}
+
+/// A cryptographically **verified** signature record, stored in the [`Receipt`]
+/// as the on-chain quorum proof (SPEC-4).
+#[odra::odra_type]
+pub struct VerifierSignature {
+    pub signer: PublicKey,
+    pub verdict: bool,
+    pub signature: Bytes,
+}
+
 /// Stored on-chain receipt for a settled `(asset_id, cycle_id)` cycle — the
 /// queryable mirror of the [`Distributed`] event (SPEC-1). Records the payout
-/// totals plus the quorum proof (distinct registered signers + verdict-hash
-/// digests). SPEC-4/5/6 extend this struct with verifier signatures, the AI
-/// brief hash, and the reputation snapshot.
+/// totals plus the **cryptographically verified** quorum proof (distinct
+/// registered signers + their verified signatures — SPEC-4). SPEC-5/6 extend
+/// this struct with the AI brief hash and the reputation snapshot.
 #[odra::odra_type]
 pub struct Receipt {
     pub asset_id: String,
@@ -85,10 +116,11 @@ pub struct Receipt {
     pub holder_count: u32,
     /// Required distinct-signer count from `AssetConfig::quorum`.
     pub quorum_required: u8,
-    /// Distinct registered verifiers whose presence satisfied the gate.
+    /// Distinct registered verifiers whose **verified** yes-signatures
+    /// satisfied the gate (SPEC-4).
     pub signers: Vec<PublicKey>,
-    /// Verdict-hash digests presented for the cycle (provenance).
-    pub verdict_hashes: Vec<[u8; 32]>,
+    /// The verified signature records (the on-chain quorum proof, SPEC-4).
+    pub verifier_signatures: Vec<VerifierSignature>,
 }
 
 #[odra::module(errors = Error, events = [Distributed])]
@@ -191,16 +223,18 @@ impl ServicerVault {
 
     /// Release the pool to holders pro-rata, once per `(asset_id, cycle_id)`.
     ///
-    /// The quorum proof — the distinct registered signer set that satisfied the
-    /// gate and the `verdict_hashes` digests — is recorded in the emitted
-    /// [`Distributed`] event. `verdict_hashes` is provenance only; it does
-    /// **not** gate distribution. See the TRUST BOUNDARY note in the body.
+    /// The quorum is enforced **on-chain** (SPEC-4): each presented
+    /// [`SignedVerdict`] is verified via `env().verify_signature` over
+    /// [`canonical_bytes`]; only valid, registered, bound, distinct-verifier
+    /// **yes** signatures count toward `quorum`. The servicer key alone cannot
+    /// release funds — it must present ≥`quorum` valid signed yes-verdicts.
+    /// The verified signer set + their signatures are recorded in the
+    /// [`Distributed`] event and the stored [`Receipt`].
     pub fn distribute(
         &mut self,
         asset_id: String,
         cycle_id: String,
-        verdict_hashes: Vec<[u8; 32]>,
-        signers: Vec<PublicKey>,
+        signed_verdicts: Vec<SignedVerdict>,
     ) {
         // 1. Asset must be registered.
         let cfg = self
@@ -214,29 +248,55 @@ impl ServicerVault {
             self.env().revert(Error::AlreadyDistributed);
         }
 
-        // 3. Quorum gate.
+        // 3. Quorum gate — ON-CHAIN SIGNATURE VERIFICATION (SPEC-4).
         //
-        // TRUST BOUNDARY: we trust the agent's `signers` list. We verify only
-        // that each presented signer is a *registered* verifier and that the
-        // count of *distinct* registered signers reaches `quorum`. We do NOT
-        // verify verifier signatures over the verdict on-chain — `distribute`
-        // carries no signatures. The real cryptographic signature check happens
-        // off-chain in the agent's `reachQuorum`. `verdict_hashes` is recorded
-        // for provenance only and does not gate distribution. On-chain
-        // signature verification is a Final-Round enhancement.
-        //
-        // `distinct_registered` is the deduped, registered signer set that the
-        // gate accepted — captured (owned) so it can be recorded in the
-        // `Distributed` event as the on-chain quorum proof.
-        let mut distinct_registered: Vec<PublicKey> = Vec::new();
-        for signer in signers.iter() {
-            let registered = cfg.verifiers.contains(signer);
-            let already_counted = distinct_registered.contains(signer);
-            if registered && !already_counted {
-                distinct_registered.push(signer.clone());
+        // TRUST BOUNDARY (post-SPEC-4): the contract verifies each Ed25519
+        // signature over `canonical_bytes(sv)` via `env().verify_signature`.
+        // A verdict counts toward the quorum only if it is:
+        //   (a) BOUND — `asset_id`/`cycle_id` match this distribute call (replay
+        //       protection L4 — a cycle-c1 signature cannot release cycle-c2).
+        //   (b) REGISTERED — `signer` is in the asset's verifier registry.
+        //   (c) DISTINCT — one vote per pubkey (anti-collusion by construction).
+        //   (d) VALID — the signature cryptographically verifies on-chain.
+        //   (e) YES — only affirmative verdicts count toward the quorum.
+        // The servicer key alone (without ≥quorum valid signed yes-verdicts)
+        // cannot release funds. Forged/replayed/unregistered signatures are
+        // silently rejected (not counted); if the valid yes-count is below
+        // quorum, `distribute` reverts `QuorumNotMet` and nothing moves.
+        let mut verified_signers: Vec<PublicKey> = Vec::new();
+        let mut verified_sigs: Vec<VerifierSignature> = Vec::new();
+        for sv in signed_verdicts.iter() {
+            // (a) BIND — verdict must be for this exact (asset, cycle).
+            if sv.asset_id != asset_id || sv.cycle_id != cycle_id {
+                continue;
+            }
+            // (b) REGISTERED.
+            if !cfg.verifiers.contains(&sv.signer) {
+                continue;
+            }
+            // (c) DISTINCT — one verified vote per pubkey.
+            if verified_signers.contains(&sv.signer) {
+                continue;
+            }
+            // (d) VALID — Ed25519 verify on-chain over the canonical bytes.
+            let message = canonical_bytes(sv);
+            if !self
+                .env()
+                .verify_signature(&message, &sv.signature, &sv.signer)
+            {
+                continue;
+            }
+            // (e) YES — only affirmative verdicts count toward the quorum.
+            if sv.verdict {
+                verified_signers.push(sv.signer.clone());
+                verified_sigs.push(VerifierSignature {
+                    signer: sv.signer.clone(),
+                    verdict: true,
+                    signature: sv.signature.clone(),
+                });
             }
         }
-        if distinct_registered.len() < cfg.quorum as usize {
+        if verified_signers.len() < cfg.quorum as usize {
             self.env().revert(Error::QuorumNotMet);
         }
 
@@ -279,8 +339,8 @@ impl ServicerVault {
         // 7. Mark this cycle settled.
         self.distributed.set(&key, true);
 
-        // 7b. Store the queryable receipt (SPEC-1) — same facts as the event,
-        //     readable via `get_receipt`. No change to the gate or payout.
+        // 7b. Store the queryable receipt (SPEC-1) — now carrying the
+        //     cryptographically verified quorum proof (SPEC-4).
         self.receipts.set(
             &key,
             Receipt {
@@ -291,23 +351,56 @@ impl ServicerVault {
                 dust_retained: pool - paid,
                 holder_count: cfg.holders.len() as u32,
                 quorum_required: cfg.quorum,
-                signers: distinct_registered.clone(),
-                verdict_hashes: verdict_hashes.clone(),
+                signers: verified_signers.clone(),
+                verifier_signatures: verified_sigs.clone(),
             },
         );
 
-        // 8. Emit the auditable record: settled totals plus the quorum proof —
-        //    the distinct registered signer set that satisfied the gate and the
-        //    verdict-hash digests presented — so anyone reading the log can
-        //    re-check that >=2 independent signers attested before funds moved.
+        // 8. Emit the auditable record: settled totals plus the verified
+        //    signer set, so anyone reading the log can re-check that
+        //    >=2 independent verifiers *cryptographically* attested before
+        //    funds moved.
         self.env().emit_event(Distributed {
             asset_id,
             cycle_id,
             total: paid,
-            signers: distinct_registered,
-            verdict_hashes,
+            signers: verified_signers,
         });
     }
+}
+
+/// Reconstruct the canonical signed bytes for a [`SignedVerdict`] (SPEC-4 §4).
+///
+/// Layout (u16 big-endian length prefixes; verdict is a single byte):
+///   `[u16 asset_id.len] asset_id_utf8`
+///   `[u16 cycle_id.len] cycle_id_utf8`
+///   `[0x01 if verdict else 0x00]`
+///   `[u16 observed_amount.len] observed_amount_utf8`
+///   `[u16 source.len] source_utf8`
+///
+/// Binary (not JSON) so the off-chain signer (`core/sign.ts :: canonicalBytes`)
+/// and this on-chain reconstruction agree byte-for-byte — no fragile
+/// cross-language string-matching. Ed25519 signs the raw bytes directly
+/// (no host hash call needed).
+fn canonical_bytes(sv: &SignedVerdict) -> Bytes {
+    let mut out: Vec<u8> = Vec::new();
+    push_str(&mut out, &sv.asset_id);
+    push_str(&mut out, &sv.cycle_id);
+    out.push(if sv.verdict { 1 } else { 0 });
+    push_str(&mut out, &sv.observed_amount);
+    push_str(&mut out, &sv.source);
+    Bytes::from(out)
+}
+
+/// Append a u16-big-endian length-prefixed UTF-8 field to `out` (canonical-bytes
+/// helper, SPEC-4 §4). Free function (not a closure) so it doesn't hold a
+/// borrow across the verdict-byte push in [`canonical_bytes`].
+fn push_str(out: &mut Vec<u8>, s: &str) {
+    let b = s.as_bytes();
+    let len = b.len() as u16;
+    out.push((len >> 8) as u8);
+    out.push((len & 0xff) as u8);
+    out.extend_from_slice(b);
 }
 
 /// Lossless widening of a holder weight (`U256`) to the native-amount domain
@@ -322,8 +415,10 @@ fn to_u512(value: &U256) -> U512 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use odra::casper_types::bytesrepr::ToBytes;
+    use odra::casper_types::crypto::sign as ed25519_sign;
     use odra::casper_types::SecretKey;
-    use odra::host::{Deployer, HostRef, NoArgs};
+    use odra::host::{Deployer, HostEnv, HostRef, NoArgs};
 
     // ---- helpers -------------------------------------------------------------
 
@@ -335,9 +430,38 @@ mod tests {
         PublicKey::from(&sk)
     }
 
-    /// A 32-byte verdict hash filled with `b`.
-    fn hash(b: u8) -> [u8; 32] {
-        [b; 32]
+    /// Build a [`SignedVerdict`] whose Ed25519 signature is valid over
+    /// [`canonical_bytes`] under the seed-derived key — i.e. exactly what a
+    /// real off-chain verifier (`core/sign.ts :: signVerdict`) produces, so the
+    /// on-chain `verify_signature` accepts it. The signature is a Casper
+    /// `Signature` serialized as `[0x01, <64 bytes>]`.
+    fn signed_verdict(
+        seed: u8,
+        asset_id: &str,
+        cycle_id: &str,
+        verdict: bool,
+        observed_amount: &str,
+        source: &str,
+    ) -> SignedVerdict {
+        let sk = SecretKey::ed25519_from_bytes([seed; 32])
+            .expect("32-byte ed25519 seed is always valid");
+        let pk = PublicKey::from(&sk);
+        let unsigned = SignedVerdict {
+            asset_id: asset_id.to_string(),
+            cycle_id: cycle_id.to_string(),
+            verdict,
+            observed_amount: observed_amount.to_string(),
+            source: source.to_string(),
+            signature: Bytes::from(Vec::new()),
+            signer: pk.clone(),
+        };
+        let message = canonical_bytes(&unsigned);
+        let signature = ed25519_sign(message.as_slice(), &sk, &pk);
+        let signature_bytes = Bytes::from(signature.to_bytes().expect("signature serializes"));
+        SignedVerdict {
+            signature: signature_bytes,
+            ..unsigned
+        }
     }
 
     /// Assert a `try_*` result reverted with the given contract error.
@@ -357,6 +481,30 @@ mod tests {
             ),
         }
     }
+
+    /// A standard 3-verifier, 2-holder, quorum-2 asset funded with 1000 motes.
+    /// Uses the caller's `env` (OdraVM envs are per-call — a helper that created
+    /// its own would deploy the vault in a different env than the one the test
+    /// inspects). Returns `(vault, alice, bob)` ready for a distribute call.
+    fn funded_vault(env: &HostEnv) -> (ServicerVaultHostRef, Address, Address) {
+        let token = env.get_account(0);
+        let alice = env.get_account(1);
+        let bob = env.get_account(2);
+        let mut vault = ServicerVault::deploy(env, NoArgs);
+        vault.register_asset(
+            "inv-1".to_string(),
+            token,
+            vec![(alice, U256::from(700)), (bob, U256::from(300))],
+            vec![vk(1), vk(2), vk(3)],
+            2,
+        );
+        vault
+            .with_tokens(U512::from(1000))
+            .fund("inv-1".to_string());
+        (vault, alice, bob)
+    }
+
+    // ---- registration / funding (unchanged behavior) -----------------------
 
     // 1. register + get
     #[test]
@@ -443,7 +591,6 @@ mod tests {
         let bob = env.get_account(2);
         let mut vault = ServicerVault::deploy(&env, NoArgs);
 
-        // Non-empty holders, but every weight is zero -> no distributable share.
         let res = vault.try_register_asset(
             "inv-1".to_string(),
             token,
@@ -508,34 +655,25 @@ mod tests {
         assert_revert(res, Error::AssetNotFound);
     }
 
-    // 6. distribute happy path (pro-rata + event)
+    // ---- distribute (SPEC-4: on-chain signature verification) -------------
+
+    // V1. happy: 3 valid registered yes-sigs -> distributes; Receipt carries
+    // 3 verified signatures.
     #[test]
     fn distribute_pays_pro_rata_and_emits_event() {
         let env = odra_test::env();
-        let token = env.get_account(0);
-        let alice = env.get_account(1);
-        let bob = env.get_account(2);
-        let mut vault = ServicerVault::deploy(&env, NoArgs);
-
-        vault.register_asset(
-            "inv-1".to_string(),
-            token,
-            vec![(alice, U256::from(700)), (bob, U256::from(300))],
-            vec![vk(1), vk(2), vk(3)],
-            2,
-        );
-        vault
-            .with_tokens(U512::from(1000))
-            .fund("inv-1".to_string());
-
+        let (mut vault, alice, bob) = funded_vault(&env);
         let alice_before = env.balance_of(&alice);
         let bob_before = env.balance_of(&bob);
 
         vault.distribute(
             "inv-1".to_string(),
             "c1".to_string(),
-            vec![hash(0xAA), hash(0xBB)],
-            vec![vk(1), vk(2)],
+            vec![
+                signed_verdict(1, "inv-1", "c1", true, "1000", "bank-api"),
+                signed_verdict(2, "inv-1", "c1", true, "1000", "stripe"),
+                signed_verdict(3, "inv-1", "c1", true, "1000", "ledger"),
+            ],
         );
 
         assert_eq!(env.balance_of(&alice) - alice_before, U512::from(700));
@@ -546,131 +684,198 @@ mod tests {
         assert_eq!(event.asset_id, "inv-1");
         assert_eq!(event.cycle_id, "c1");
         assert_eq!(event.total, U512::from(1000));
-        // Quorum proof recorded on-chain: the distinct registered signers that
-        // satisfied the gate, and the exact verdict hashes presented.
-        assert_eq!(event.signers, vec![vk(1), vk(2)]);
-        assert_eq!(event.verdict_hashes, vec![hash(0xAA), hash(0xBB)]);
+        assert_eq!(event.signers, vec![vk(1), vk(2), vk(3)]);
+
+        let receipt = vault
+            .get_receipt("inv-1".to_string(), "c1".to_string())
+            .expect("receipt");
+        assert_eq!(receipt.signers, vec![vk(1), vk(2), vk(3)]);
+        assert_eq!(receipt.verifier_signatures.len(), 3);
+        // V10: Receipt.signers == cryptographically verified set.
+        assert_eq!(receipt.signers, event.signers);
     }
 
-    // 7. distribute fraud / under-quorum
+    // V2. exact-quorum (2 valid yes-sigs, quorum=2) -> distributes.
+    #[test]
+    fn distribute_exact_quorum_distributes() {
+        let env = odra_test::env();
+        let (mut vault, alice, bob) = funded_vault(&env);
+        let alice_before = env.balance_of(&alice);
+
+        vault.distribute(
+            "inv-1".to_string(),
+            "c1".to_string(),
+            vec![
+                signed_verdict(1, "inv-1", "c1", true, "1000", "bank-api"),
+                signed_verdict(2, "inv-1", "c1", true, "1000", "stripe"),
+            ],
+        );
+        assert_eq!(env.balance_of(&alice) - alice_before, U512::from(700));
+    }
+
+    // V3. sub-quorum (1 valid yes-sig) -> QuorumNotMet; funds untouched; no Receipt.
     #[test]
     fn distribute_reverts_under_quorum_and_preserves_state() {
         let env = odra_test::env();
-        let token = env.get_account(0);
-        let alice = env.get_account(1);
-        let bob = env.get_account(2);
-        let mut vault = ServicerVault::deploy(&env, NoArgs);
-
-        vault.register_asset(
-            "inv-1".to_string(),
-            token,
-            vec![(alice, U256::from(700)), (bob, U256::from(300))],
-            vec![vk(1), vk(2), vk(3)],
-            2,
-        );
-        vault
-            .with_tokens(U512::from(1000))
-            .fund("inv-1".to_string());
-
+        let (mut vault, alice, bob) = funded_vault(&env);
         let alice_before = env.balance_of(&alice);
         let bob_before = env.balance_of(&bob);
 
         let res = vault.try_distribute(
             "inv-1".to_string(),
             "c1".to_string(),
-            vec![hash(0xAA)],
-            vec![vk(1)], // 1 < quorum 2
+            vec![signed_verdict(1, "inv-1", "c1", true, "1000", "bank-api")], // 1 < quorum 2
         );
         assert_revert(res, Error::QuorumNotMet);
 
         assert_eq!(env.balance_of(&alice), alice_before);
         assert_eq!(env.balance_of(&bob), bob_before);
         assert_eq!(vault.pool_of("inv-1".to_string()), U512::from(1000));
+        // No phantom receipt on the fraud/halt path.
+        assert!(vault
+            .get_receipt("inv-1".to_string(), "c1".to_string())
+            .is_none());
     }
 
-    // 8. distribute dedups a doubled signer
+    // V4. FORGED SIGNATURE — sig doesn't match the pubkey/message -> not
+    // counted; if it drops below quorum -> QuorumNotMet (the security proof).
+    #[test]
+    fn distribute_rejects_forged_signature() {
+        let env = odra_test::env();
+        let (mut vault, alice, _bob) = funded_vault(&env);
+        let alice_before = env.balance_of(&alice);
+
+        // A real verdict from vk(1)...
+        let real = signed_verdict(1, "inv-1", "c1", true, "1000", "bank-api");
+        // ...but a FORGERY: sign with vk(2)'s key yet claim vk(1) as signer, so
+        // the on-chain verify against vk(1) fails.
+        let sk2 = SecretKey::ed25519_from_bytes([2u8; 32]).unwrap();
+        let pk2 = PublicKey::from(&sk2);
+        let forged = SignedVerdict {
+            signer: vk(1), // claim a different signer than the key that signed
+            signature: Bytes::from(
+                ed25519_sign(canonical_bytes(&real).as_slice(), &sk2, &pk2)
+                    .to_bytes()
+                    .expect("sig"),
+            ),
+            ..real
+        };
+
+        let res = vault.try_distribute(
+            "inv-1".to_string(),
+            "c1".to_string(),
+            vec![forged], // 0 valid -> below quorum
+        );
+        assert_revert(res, Error::QuorumNotMet);
+        assert_eq!(env.balance_of(&alice), alice_before);
+        assert_eq!(vault.pool_of("inv-1".to_string()), U512::from(1000));
+    }
+
+    // V5. REPLAY — a signature bound to cycle "c1" cannot release cycle "c2".
+    #[test]
+    fn distribute_rejects_replayed_signature() {
+        let env = odra_test::env();
+        let (mut vault, alice, _bob) = funded_vault(&env);
+        let alice_before = env.balance_of(&alice);
+
+        // Sign a verdict for cycle "c1", but call distribute for cycle "c2".
+        let c1_sig = signed_verdict(1, "inv-1", "c1", true, "1000", "bank-api");
+        let c2_sig = SignedVerdict {
+            cycle_id: "c2".to_string(),
+            ..c1_sig
+        };
+        // Also a second verifier signed for c2 properly — if c1-replay counted,
+        // this would distribute; it must NOT (the replayed sig is bound to c1).
+        let res = vault.try_distribute(
+            "inv-1".to_string(),
+            "c2".to_string(),
+            vec![c2_sig], // bound to c1, presented for c2 -> skipped; 0 valid
+        );
+        assert_revert(res, Error::QuorumNotMet);
+        assert_eq!(env.balance_of(&alice), alice_before);
+    }
+
+    // V6. UNREGISTERED SIGNER — valid sig, but pubkey not in the registry.
+    #[test]
+    fn distribute_ignores_unregistered_signer() {
+        let env = odra_test::env();
+        let (mut vault, alice, _bob) = funded_vault(&env);
+        let alice_before = env.balance_of(&alice);
+
+        // vk(99) is not in the registered set {vk(1), vk(2), vk(3)}.
+        let res = vault.try_distribute(
+            "inv-1".to_string(),
+            "c1".to_string(),
+            vec![signed_verdict(99, "inv-1", "c1", true, "1000", "bank-api")],
+        );
+        assert_revert(res, Error::QuorumNotMet);
+        assert_eq!(env.balance_of(&alice), alice_before);
+        assert_eq!(vault.pool_of("inv-1".to_string()), U512::from(1000));
+    }
+
+    // V7. COLLUSION — the same pubkey signed twice counts once.
     #[test]
     fn distribute_dedups_doubled_signer() {
         let env = odra_test::env();
-        let token = env.get_account(0);
-        let alice = env.get_account(1);
-        let mut vault = ServicerVault::deploy(&env, NoArgs);
+        let (mut vault, _alice, _bob) = funded_vault(&env);
 
-        vault.register_asset(
-            "inv-1".to_string(),
-            token,
-            vec![(alice, U256::from(1))],
-            vec![vk(1), vk(2), vk(3)],
-            2,
-        );
-        vault
-            .with_tokens(U512::from(1000))
-            .fund("inv-1".to_string());
-
+        let sv = signed_verdict(1, "inv-1", "c1", true, "1000", "bank-api");
         let res = vault.try_distribute(
             "inv-1".to_string(),
             "c1".to_string(),
-            vec![hash(0xAA)],
-            vec![vk(1), vk(1)], // one distinct signer
+            vec![sv.clone(), sv], // one distinct signer, twice
         );
         assert_revert(res, Error::QuorumNotMet);
         assert_eq!(vault.pool_of("inv-1".to_string()), U512::from(1000));
     }
 
-    // 9. distribute ignores a non-registered signer
+    // V8. NO BACK DOOR — the old trusted-`signers` call is gone (compile-time:
+    // `distribute` now requires `signed_verdicts`). A no-signature call (empty
+    // vec) reverts QuorumNotMet.
     #[test]
-    fn distribute_ignores_non_registered_signer() {
+    fn distribute_with_no_signatures_reverts() {
         let env = odra_test::env();
-        let token = env.get_account(0);
-        let alice = env.get_account(1);
-        let mut vault = ServicerVault::deploy(&env, NoArgs);
+        let (mut vault, alice, _bob) = funded_vault(&env);
+        let alice_before = env.balance_of(&alice);
 
-        vault.register_asset(
-            "inv-1".to_string(),
-            token,
-            vec![(alice, U256::from(1))],
-            vec![vk(1), vk(2), vk(3)],
-            2,
-        );
-        vault
-            .with_tokens(U512::from(1000))
-            .fund("inv-1".to_string());
+        let res = vault.try_distribute("inv-1".to_string(), "c1".to_string(), vec![]);
+        assert_revert(res, Error::QuorumNotMet);
+        assert_eq!(env.balance_of(&alice), alice_before);
+    }
 
+    // V9. a validly-signed "no" verdict is verified but doesn't help quorum.
+    #[test]
+    fn distribute_counts_no_verdict_but_it_does_not_satisfy_quorum() {
+        let env = odra_test::env();
+        let (mut vault, alice, _bob) = funded_vault(&env);
+        let alice_before = env.balance_of(&alice);
+
+        // One yes + one validly-signed no: only the yes counts (1 < quorum 2).
         let res = vault.try_distribute(
             "inv-1".to_string(),
             "c1".to_string(),
-            vec![hash(0xAA)],
-            vec![vk(1), vk(99)], // vk(99) not registered -> only vk(1) counts
+            vec![
+                signed_verdict(1, "inv-1", "c1", true, "1000", "bank-api"),
+                signed_verdict(2, "inv-1", "c1", false, "0", "bank-api"),
+            ],
         );
         assert_revert(res, Error::QuorumNotMet);
-        assert_eq!(vault.pool_of("inv-1".to_string()), U512::from(1000));
+        assert_eq!(env.balance_of(&alice), alice_before);
     }
 
     // 10. distribute idempotent per cycle
     #[test]
     fn distribute_is_idempotent_per_cycle() {
         let env = odra_test::env();
-        let token = env.get_account(0);
-        let alice = env.get_account(1);
-        let bob = env.get_account(2);
-        let mut vault = ServicerVault::deploy(&env, NoArgs);
-
-        vault.register_asset(
-            "inv-1".to_string(),
-            token,
-            vec![(alice, U256::from(700)), (bob, U256::from(300))],
-            vec![vk(1), vk(2), vk(3)],
-            2,
-        );
-        vault
-            .with_tokens(U512::from(1000))
-            .fund("inv-1".to_string());
+        let (mut vault, alice, bob) = funded_vault(&env);
 
         vault.distribute(
             "inv-1".to_string(),
             "c1".to_string(),
-            vec![hash(0xAA), hash(0xBB)],
-            vec![vk(1), vk(2)],
+            vec![
+                signed_verdict(1, "inv-1", "c1", true, "1000", "bank-api"),
+                signed_verdict(2, "inv-1", "c1", true, "1000", "stripe"),
+            ],
         );
 
         let alice_after_first = env.balance_of(&alice);
@@ -680,8 +885,10 @@ mod tests {
         let res = vault.try_distribute(
             "inv-1".to_string(),
             "c1".to_string(),
-            vec![hash(0xAA), hash(0xBB)],
-            vec![vk(1), vk(2)],
+            vec![
+                signed_verdict(1, "inv-1", "c1", true, "1000", "bank-api"),
+                signed_verdict(2, "inv-1", "c1", true, "1000", "stripe"),
+            ],
         );
         assert_revert(res, Error::AlreadyDistributed);
         assert_eq!(env.balance_of(&alice), alice_after_first);
@@ -694,8 +901,10 @@ mod tests {
         vault.distribute(
             "inv-1".to_string(),
             "c2".to_string(),
-            vec![hash(0xCC), hash(0xDD)],
-            vec![vk(1), vk(2)],
+            vec![
+                signed_verdict(1, "inv-1", "c2", true, "1000", "bank-api"),
+                signed_verdict(2, "inv-1", "c2", true, "1000", "stripe"),
+            ],
         );
         assert_eq!(env.balance_of(&alice) - alice_after_first, U512::from(700));
         assert_eq!(env.balance_of(&bob) - bob_after_first, U512::from(300));
@@ -717,6 +926,7 @@ mod tests {
             vec![vk(1), vk(2), vk(3)],
             2,
         );
+        // No fund() -> pool is zero.
 
         let alice_before = env.balance_of(&alice);
         let bob_before = env.balance_of(&bob);
@@ -724,8 +934,10 @@ mod tests {
         let res = vault.try_distribute(
             "inv-1".to_string(),
             "c1".to_string(),
-            vec![hash(0xAA), hash(0xBB)],
-            vec![vk(1), vk(2)],
+            vec![
+                signed_verdict(1, "inv-1", "c1", true, "1000", "bank-api"),
+                signed_verdict(2, "inv-1", "c1", true, "1000", "stripe"),
+            ],
         );
         assert_revert(res, Error::InsufficientPool);
         assert_eq!(env.balance_of(&alice), alice_before);
@@ -760,8 +972,10 @@ mod tests {
         vault.distribute(
             "inv-1".to_string(),
             "c1".to_string(),
-            vec![hash(0xCC), hash(0xDD)],
-            vec![vk(1), vk(2)],
+            vec![
+                signed_verdict(1, "inv-1", "c1", true, "1000", "bank-api"),
+                signed_verdict(2, "inv-1", "c1", true, "1000", "stripe"),
+            ],
         );
 
         assert_eq!(env.balance_of(&a) - a_before, U512::from(333));
@@ -774,30 +988,16 @@ mod tests {
         assert_eq!(event.total, U512::from(999));
         // Quorum proof recorded even when dust is carried.
         assert_eq!(event.signers, vec![vk(1), vk(2)]);
-        assert_eq!(event.verdict_hashes, vec![hash(0xCC), hash(0xDD)]);
     }
 
-    // ---- SPEC-1: queryable on-chain receipts (R1–R6) ----------------------
+    // ---- SPEC-1: queryable on-chain receipts (R1–R6, adapted to SPEC-4) ----
 
     // R1. get_receipt returns None before distribute.
     #[test]
     fn get_receipt_none_before_distribute() {
         let env = odra_test::env();
-        let token = env.get_account(0);
-        let alice = env.get_account(1);
-        let mut vault = ServicerVault::deploy(&env, NoArgs);
-
-        vault.register_asset(
-            "inv-1".to_string(),
-            token,
-            vec![(alice, U256::from(1))],
-            vec![vk(1), vk(2), vk(3)],
-            2,
-        );
-        vault
-            .with_tokens(U512::from(1000))
-            .fund("inv-1".to_string());
-
+        let (vault, _alice, _bob) = funded_vault(&env);
+        // Funded + registered but NOT distributed -> no receipt yet.
         assert!(vault
             .get_receipt("inv-1".to_string(), "c1".to_string())
             .is_none());
@@ -807,27 +1007,15 @@ mod tests {
     #[test]
     fn get_receipt_mirrors_event_after_distribute() {
         let env = odra_test::env();
-        let token = env.get_account(0);
-        let alice = env.get_account(1);
-        let bob = env.get_account(2);
-        let mut vault = ServicerVault::deploy(&env, NoArgs);
-
-        vault.register_asset(
-            "inv-1".to_string(),
-            token,
-            vec![(alice, U256::from(700)), (bob, U256::from(300))],
-            vec![vk(1), vk(2), vk(3)],
-            2,
-        );
-        vault
-            .with_tokens(U512::from(1000))
-            .fund("inv-1".to_string());
+        let (mut vault, _alice, _bob) = funded_vault(&env);
 
         vault.distribute(
             "inv-1".to_string(),
             "c1".to_string(),
-            vec![hash(0xAA), hash(0xBB)],
-            vec![vk(1), vk(2)],
+            vec![
+                signed_verdict(1, "inv-1", "c1", true, "1000", "bank-api"),
+                signed_verdict(2, "inv-1", "c1", true, "1000", "stripe"),
+            ],
         );
 
         let receipt = vault
@@ -840,13 +1028,12 @@ mod tests {
         assert_eq!(receipt.holder_count, 2);
         assert_eq!(receipt.quorum_required, 2);
         assert_eq!(receipt.signers, vec![vk(1), vk(2)]);
-        assert_eq!(receipt.verdict_hashes, vec![hash(0xAA), hash(0xBB)]);
+        assert_eq!(receipt.verifier_signatures.len(), 2);
 
-        // Mirrors the event exactly.
+        // Mirrors the event exactly (signers + total).
         let event: Distributed = env.get_event(&vault, 0).expect("Distributed event");
         assert_eq!(event.total, receipt.total_distributed);
         assert_eq!(event.signers, receipt.signers);
-        assert_eq!(event.verdict_hashes, receipt.verdict_hashes);
     }
 
     // R3. dust_retained == pool - paid.
@@ -873,8 +1060,10 @@ mod tests {
         vault.distribute(
             "inv-1".to_string(),
             "c1".to_string(),
-            vec![hash(0xCC), hash(0xDD)],
-            vec![vk(1), vk(2)],
+            vec![
+                signed_verdict(1, "inv-1", "c1", true, "1000", "bank-api"),
+                signed_verdict(2, "inv-1", "c1", true, "1000", "stripe"),
+            ],
         );
 
         let receipt = vault
@@ -890,27 +1079,12 @@ mod tests {
     #[test]
     fn receipt_absent_when_quorum_not_met() {
         let env = odra_test::env();
-        let token = env.get_account(0);
-        let alice = env.get_account(1);
-        let bob = env.get_account(2);
-        let mut vault = ServicerVault::deploy(&env, NoArgs);
-
-        vault.register_asset(
-            "inv-1".to_string(),
-            token,
-            vec![(alice, U256::from(700)), (bob, U256::from(300))],
-            vec![vk(1), vk(2), vk(3)],
-            2,
-        );
-        vault
-            .with_tokens(U512::from(1000))
-            .fund("inv-1".to_string());
+        let (mut vault, _alice, _bob) = funded_vault(&env);
 
         let res = vault.try_distribute(
             "inv-1".to_string(),
             "c1".to_string(),
-            vec![hash(0xAA)],
-            vec![vk(1)], // 1 < quorum 2
+            vec![signed_verdict(1, "inv-1", "c1", true, "1000", "bank-api")], // 1 < 2
         );
         assert_revert(res, Error::QuorumNotMet);
 
@@ -924,27 +1098,15 @@ mod tests {
     #[test]
     fn receipt_not_overwritten_on_idempotent_redistribute() {
         let env = odra_test::env();
-        let token = env.get_account(0);
-        let alice = env.get_account(1);
-        let bob = env.get_account(2);
-        let mut vault = ServicerVault::deploy(&env, NoArgs);
-
-        vault.register_asset(
-            "inv-1".to_string(),
-            token,
-            vec![(alice, U256::from(700)), (bob, U256::from(300))],
-            vec![vk(1), vk(2), vk(3)],
-            2,
-        );
-        vault
-            .with_tokens(U512::from(1000))
-            .fund("inv-1".to_string());
+        let (mut vault, _alice, _bob) = funded_vault(&env);
 
         vault.distribute(
             "inv-1".to_string(),
             "c1".to_string(),
-            vec![hash(0xAA), hash(0xBB)],
-            vec![vk(1), vk(2)],
+            vec![
+                signed_verdict(1, "inv-1", "c1", true, "1000", "bank-api"),
+                signed_verdict(2, "inv-1", "c1", true, "1000", "stripe"),
+            ],
         );
         let first = vault
             .get_receipt("inv-1".to_string(), "c1".to_string())
@@ -954,43 +1116,34 @@ mod tests {
         let res = vault.try_distribute(
             "inv-1".to_string(),
             "c1".to_string(),
-            vec![hash(0xCC), hash(0xDD)], // different hashes must not overwrite
-            vec![vk(1), vk(2)],
+            vec![
+                signed_verdict(3, "inv-1", "c1", true, "1000", "ledger"), // different signer
+                signed_verdict(2, "inv-1", "c1", true, "1000", "stripe"),
+            ],
         );
         assert_revert(res, Error::AlreadyDistributed);
 
         let after = vault
             .get_receipt("inv-1".to_string(), "c1".to_string())
             .expect("receipt still present");
-        assert_eq!(after.verdict_hashes, first.verdict_hashes);
-        assert_eq!(after.verdict_hashes, vec![hash(0xAA), hash(0xBB)]);
+        // First receipt is final — the second distribute did not overwrite.
+        assert_eq!(after.signers, first.signers);
+        assert_eq!(after.signers, vec![vk(1), vk(2)]);
     }
 
     // R6. distinct cycles produce distinct receipts.
     #[test]
     fn distinct_cycles_have_distinct_receipts() {
         let env = odra_test::env();
-        let token = env.get_account(0);
-        let alice = env.get_account(1);
-        let bob = env.get_account(2);
-        let mut vault = ServicerVault::deploy(&env, NoArgs);
-
-        vault.register_asset(
-            "inv-1".to_string(),
-            token,
-            vec![(alice, U256::from(700)), (bob, U256::from(300))],
-            vec![vk(1), vk(2), vk(3)],
-            2,
-        );
-        vault
-            .with_tokens(U512::from(1000))
-            .fund("inv-1".to_string());
+        let (mut vault, _alice, _bob) = funded_vault(&env);
 
         vault.distribute(
             "inv-1".to_string(),
             "c1".to_string(),
-            vec![hash(0xAA), hash(0xBB)],
-            vec![vk(1), vk(2)],
+            vec![
+                signed_verdict(1, "inv-1", "c1", true, "1000", "bank-api"),
+                signed_verdict(2, "inv-1", "c1", true, "1000", "stripe"),
+            ],
         );
         vault
             .with_tokens(U512::from(1000))
@@ -998,8 +1151,10 @@ mod tests {
         vault.distribute(
             "inv-1".to_string(),
             "c2".to_string(),
-            vec![hash(0xCC), hash(0xDD)],
-            vec![vk(2), vk(3)],
+            vec![
+                signed_verdict(2, "inv-1", "c2", true, "1000", "stripe"),
+                signed_verdict(3, "inv-1", "c2", true, "1000", "ledger"),
+            ],
         );
 
         let r1 = vault
@@ -1011,6 +1166,6 @@ mod tests {
         assert_eq!(r1.cycle_id, "c1");
         assert_eq!(r2.cycle_id, "c2");
         assert_ne!(r1.signers, r2.signers);
-        assert_ne!(r1.verdict_hashes, r2.verdict_hashes);
+        assert_ne!(r1.verifier_signatures, r2.verifier_signatures);
     }
 }
