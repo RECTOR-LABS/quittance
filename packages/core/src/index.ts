@@ -8,7 +8,7 @@ export type { PaymentClient, PaymentRequest, SettlementReceipt } from "./payment
 export type { ChainClient, DeployResult } from "./chain-client.js";
 
 // Signing / verification trust primitive
-export { canonicalHash, signVerdict, verifyVerdict } from "./sign.js";
+export { canonicalBytes, canonicalHash, signVerdict, verifyVerdict } from "./sign.js";
 
 // Quorum logic
 export type { QuorumResult } from "./quorum.js";
