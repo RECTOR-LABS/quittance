@@ -12,5 +12,10 @@
     "node": ">=20",
     "pnpm": ">=10"
   },
-  "packageManager": "pnpm@10.33.2"
+  "packageManager": "pnpm@10.33.2",
+  "pnpm": {
+    "overrides": {
+      "postcss": "8.5.16"
+    }
+  }
 }
