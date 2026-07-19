@@ -171,8 +171,15 @@ export async function runCycle(
     {
       asset_id: cfg.assetId,
       cycle_id: cycleId,
-      verdict_hashes: quorum.verdictHashes,
-      signers: quorum.yesSigners,
+      // SPEC-4: forward ALL collected signed verdicts. The contract verifies
+      // each Ed25519 signature on-chain and counts only valid distinct
+      // registered yes-verdicts. reachQuorum is a pre-check; the chain is the
+      // authority (L3).
+      signers: verdicts.map((v) => v.signer),
+      verdicts: verdicts.map((v) => v.verdict.verdict),
+      signatures: verdicts.map((v) => v.signature),
+      observed_amounts: verdicts.map((v) => v.verdict.observedAmount),
+      sources: verdicts.map((v) => v.verdict.source),
     },
   );
 

@@ -125,7 +125,7 @@ describe("runCycle — happy path (2 yes + 1 no → distributed)", () => {
     expect(distributeCalls).toHaveLength(1);
   });
 
-  it("distribute args include asset_id, cycle_id, verdict_hashes, signers", async () => {
+  it("distribute args include asset_id, cycle_id, and the SPEC-4 parallel-arrays evidence", async () => {
     await runCycle({ verifierClient: verifier, chainClient: chain }, BASE_CFG, CYCLE_ID);
     const distributeCall = chain.calls.find(
       (c) => c.method === "callEntrypoint" && (c.args as unknown[])[1] === "distribute",
@@ -134,8 +134,10 @@ describe("runCycle — happy path (2 yes + 1 no → distributed)", () => {
     const args = (distributeCall!.args as unknown[])[2] as Record<string, unknown>;
     expect(args["asset_id"]).toBe(ASSET_ID);
     expect(args["cycle_id"]).toBe(CYCLE_ID);
-    expect(Array.isArray(args["verdict_hashes"])).toBe(true);
-    expect(Array.isArray(args["signers"])).toBe(true);
+    // SPEC-4: five parallel arrays (one entry per verifier).
+    for (const key of ["signers", "verdicts", "signatures", "observed_amounts", "sources"]) {
+      expect(Array.isArray(args[key])).toBe(true);
+    }
   });
 
   it("no reason set on success", async () => {
