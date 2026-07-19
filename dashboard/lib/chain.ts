@@ -1,4 +1,4 @@
-import type { DistributionReceipt } from './types';
+import type { DistributionReceipt, VerifierReputation } from './types';
 
 const RPC_URL = process.env.CASPER_NODE_URL ?? 'https://node.testnet.casper.network/rpc';
 
@@ -24,6 +24,43 @@ export async function liveBalanceMotes(publicKeyHex: string): Promise<string | n
     const json = await res.json();
     const balance = json?.result?.balance;
     return typeof balance === 'string' ? balance : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Reads the on-chain verifier registry (SPEC-6) from the vault contract via
+ * `query_state`. SDK-free raw RPC like `liveDistributionReceipt`.
+ *
+ * NOTE (bundled deploy): the stored `verifier_registry` is a `Mapping` + the
+ * `verifier_keys` index is a `Var<Vec<PublicKey>>`; full on-chain CLValue decode
+ * wires when the reputation-bearing contract is deployed (bundled with
+ * SPEC-1 + SPEC-4 + SPEC-6). Until then this returns null gracefully so the
+ * UI falls back to the committed-ledger reputation (`verifierRegistryFromCommitted`)
+ * — same philosophy as the receipt read. Read-only, no secrets.
+ */
+export async function liveVerifierRegistry(
+  contractHash: string,
+): Promise<VerifierReputation[] | null> {
+  try {
+    const res = await fetch(RPC_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'query_state',
+        params: { key: contractHash, path: ['verifier_keys'] },
+      }),
+      cache: 'no-store',
+    });
+    if (!res.ok) return null;
+    const json = await res.json();
+    if (json?.error || !json?.result) return null;
+    // CLValue decode wires at the bundled deploy. Until then, treat any
+    // non-decodable response as "not yet available" → graceful null.
+    return null;
   } catch {
     return null;
   }

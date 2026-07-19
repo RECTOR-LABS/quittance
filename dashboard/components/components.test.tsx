@@ -3,6 +3,8 @@ import { render, screen } from '@testing-library/react';
 import { TxLink } from './TxLink';
 import { QuorumGate } from './QuorumGate';
 import { VerdictCard } from './VerdictCard';
+import { VerifierReputationCard } from './VerifierReputationCard';
+import type { VerifierReputation } from '@/lib/types';
 
 describe('components', () => {
   it('TxLink builds a deploy url', () => {
@@ -22,5 +24,33 @@ describe('components', () => {
     render(<VerdictCard verdict={{ source: 'v1', verdict: 'yes', observedAmount: '1000000000000', signer: '21423f38', signature: 'bc38' }} />);
     expect(screen.getByText('v1')).toBeInTheDocument();
     expect(screen.getByText('yes')).toBeInTheDocument();
+  });
+});
+
+describe('VerifierReputationCard (SPEC-6)', () => {
+  const rep: VerifierReputation = {
+    signer: 'v1',
+    pubkeyHex: '0121423f386b2700fe0cc65a5bb3bbb8dcadfa1dac6abe89b51f23b0af72c72892',
+    cyclesSeen: 2,
+    cyclesVoted: 2,
+    cyclesAgreed: 1,
+    lastVerdict: 'no',
+    lastCycle: 'happy',
+  };
+  it('renders the raw counts + derived ratios', () => {
+    render(<VerifierReputationCard reputation={rep} />);
+    expect(screen.getByText('v1')).toBeInTheDocument(); // label
+    // response rate = 2/2 = 100%; accuracy = 1/2 = 50% (unique strings)
+    expect(screen.getByText('100%')).toBeInTheDocument();
+    expect(screen.getByText('50%')).toBeInTheDocument();
+    // seen + voted both render '2' (two distinct count cells)
+    expect(screen.getAllByText('2')).toHaveLength(2);
+    // last vote = no
+    expect(screen.getByText('no')).toBeInTheDocument();
+  });
+
+  it('renders a dash for last vote when the verifier has not voted', () => {
+    render(<VerifierReputationCard reputation={{ ...rep, lastVerdict: null, lastCycle: null }} />);
+    expect(screen.getByText('—')).toBeInTheDocument();
   });
 });

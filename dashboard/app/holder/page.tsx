@@ -7,7 +7,8 @@ export const dynamic = 'force-dynamic';
 
 export default async function HolderPage() {
   const asset = getAsset();
-  const happy = getCycles().find((c) => c.cycleId === 'happy')!;
+  const cycles = getCycles();
+  const happy = cycles.find((c) => c.cycleId === 'happy')!;
   const rows = await Promise.all(
     asset.holders.map(async (h) => ({
       holder: h,
@@ -35,7 +36,7 @@ export default async function HolderPage() {
           The happy cycle&apos;s payout, recorded on chain — queryable via{' '}
           <code className="font-mono">get_receipt</code>.
         </p>
-        <DistributionReceiptCard receipt={distributionReceiptForCycle(happy, asset)} />
+        <DistributionReceiptCard receipt={distributionReceiptForCycle(happy, asset, cycles)} />
       </section>
     </div>
   );

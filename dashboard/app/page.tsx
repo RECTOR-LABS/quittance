@@ -1,6 +1,7 @@
-import { getAsset, getCycles, distributionReceiptForCycle } from '@/lib/data';
+import { getAsset, getCycles, distributionReceiptForCycle, verifierRegistryFromCommitted } from '@/lib/data';
 import { AssetHeader } from '@/components/AssetHeader';
 import { VerifierBadge } from '@/components/VerifierBadge';
+import { VerifierReputationCard } from '@/components/VerifierReputationCard';
 import { CycleCard } from '@/components/CycleCard';
 
 export const revalidate = 15;
@@ -8,6 +9,7 @@ export const revalidate = 15;
 export default function IssuerPage() {
   const asset = getAsset();
   const cycles = getCycles();
+  const reputation = verifierRegistryFromCommitted(asset, cycles);
   return (
     <div className="space-y-10">
       <section>
@@ -41,6 +43,20 @@ export default function IssuerPage() {
                 <VerifierBadge key={v.label} verifier={v} />
               ))}
             </div>
+            <div className="mt-4 border-t border-edge pt-3">
+              <h3 className="mb-2 font-mono text-xs uppercase tracking-[0.18em] text-muted">
+                Reputation <span className="text-accent">(SPEC-6)</span>
+              </h3>
+              <p className="mb-2 font-sans text-[11px] text-muted">
+                On-chain track record: cycles seen, voted, agreed. Settled cycles only
+                — halted cycles don&apos;t score (no ground truth without settlement).
+              </p>
+              <div className="grid gap-2">
+                {reputation.map((r) => (
+                  <VerifierReputationCard key={r.signer} reputation={r} />
+                ))}
+              </div>
+            </div>
           </div>
         </div>
       </section>
@@ -55,7 +71,7 @@ export default function IssuerPage() {
             <CycleCard
               key={c.cycleId}
               cycle={c}
-              receipt={c.status === 'distributed' ? distributionReceiptForCycle(c, asset) : undefined}
+              receipt={c.status === 'distributed' ? distributionReceiptForCycle(c, asset, cycles) : undefined}
             />
           ))}
         </div>

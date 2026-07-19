@@ -1,7 +1,7 @@
 import type { DistributionReceipt } from '@/lib/types';
 import { motesToCspr } from '@/lib/format';
 import { TxLink } from './TxLink';
-import { ShieldCheck } from 'lucide-react';
+import { ShieldCheck, History } from 'lucide-react';
 
 /**
  * Renders the on-chain distribution receipt (SPEC-1) — the queryable mirror of
@@ -50,6 +50,27 @@ export function DistributionReceiptCard({ receipt }: { receipt: DistributionRece
           <dd className="text-yes">{receipt.signers.length} signature(s) verified on-chain (SPEC-4)</dd>
         </div>
       </dl>
+      {receipt.reputationSnapshot.length > 0 && (
+        <div className="mt-2 border-t border-edge pt-2">
+          <div className="flex items-center gap-2">
+            <History className="h-3 w-3 text-muted" aria-hidden />
+            <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-muted">
+              reputation at settlement
+            </span>
+          </div>
+          <p className="mt-0.5 font-sans text-[10px] text-muted">
+            The track record each verifier brought to this cycle (pre-settlement).
+          </p>
+          <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 font-mono text-[10px]">
+            {receipt.reputationSnapshot.map((s) => (
+              <span key={s.signer} className="text-muted">
+                {s.signer}{' '}
+                <span className="text-yes">{s.cyclesAgreed}</span>/{s.cyclesVoted}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
       {receipt.verifyTx && (
         <div className="mt-2 font-mono text-xs text-muted">
           verify on chain <TxLink kind="deploy" hash={receipt.verifyTx} />

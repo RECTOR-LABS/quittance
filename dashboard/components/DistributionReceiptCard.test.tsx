@@ -12,6 +12,10 @@ const receipt: DistributionReceipt = {
   quorumRequired: 2,
   signers: ['verifier-a', 'verifier-b'],
   verdictHashes: ['0xaa', '0xbb'],
+  reputationSnapshot: [
+    { signer: 'verifier-a', cyclesSeen: 1, cyclesVoted: 1, cyclesAgreed: 1 },
+    { signer: 'verifier-b', cyclesSeen: 1, cyclesVoted: 1, cyclesAgreed: 0 },
+  ],
   verifyTx: '6821e0f3e6b01325965562f964047782dab13d4602b7dae7bc7e67c70ac37829',
 };
 
@@ -34,5 +38,17 @@ describe('DistributionReceiptCard', () => {
       <DistributionReceiptCard receipt={{ ...receipt, verifyTx: undefined }} />,
     );
     expect(container.querySelector('a')).toBeNull();
+  });
+
+  it('renders the reputation-at-settlement snapshot per verifier (SPEC-6)', () => {
+    render(<DistributionReceiptCard receipt={receipt} />);
+    expect(screen.getByText(/reputation at settlement/i)).toBeInTheDocument();
+    // The block's explanatory copy uniquely identifies it.
+    expect(screen.getByText(/track record each verifier brought/i)).toBeInTheDocument();
+  });
+
+  it('omits the reputation block when the snapshot is empty', () => {
+    render(<DistributionReceiptCard receipt={{ ...receipt, reputationSnapshot: [] }} />);
+    expect(screen.queryByText(/reputation at settlement/i)).toBeNull();
   });
 });
