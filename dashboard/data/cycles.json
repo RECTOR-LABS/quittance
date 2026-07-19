@@ -1,19 +1,19 @@
 [
   {
-    "cycleId": "happy",
+    "cycleId": "happy2",
     "status": "distributed",
     "verdicts": [
-      { "source": "v1", "verdict": "yes", "observedAmount": "1000000000000", "signer": "21423f386b2700fe0cc65a5bb3bbb8dcadfa1dac6abe89b51f23b0af72c72892", "signature": "" },
-      { "source": "v2", "verdict": "yes", "observedAmount": "1000000000000", "signer": "d13c0fd57a9f58046fa4527777d3367350c739bc97eb55a21d6452267da65105", "signature": "" },
-      { "source": "v3", "verdict": "yes", "observedAmount": "1000000000000", "signer": "4970062de460a171b72fd7546ff17efaaceacf1c615a239cb1e254f736566697", "signature": "" }
+      { "source": "v1", "verdict": "yes", "observedAmount": "1000000000000", "signer": "21423f386b2700fe0cc65a5bb3bbb8dcadfa1dac6abe89b51f23b0af72c72892", "signature": "72ecebe53306f76b7e9e1e46861893041a52da04b29cc63e876be68d8e36f361150d304a3c40919174199a66bca3ed6cf2faacf123e7f0659bfcab27f0b29400" },
+      { "source": "v2", "verdict": "yes", "observedAmount": "1000000000000", "signer": "d13c0fd57a9f58046fa4527777d3367350c739bc97eb55a21d6452267da65105", "signature": "e82685d466b985bf5fa3d401150140a0067ab002a241250fb85e3e655730da4e4469c4a022d793b32a7ebe65302425df7238957e6621a92825c629b5b3b1230b" },
+      { "source": "v3", "verdict": "yes", "observedAmount": "1000000000000", "signer": "4970062de460a171b72fd7546ff17efaaceacf1c615a239cb1e254f736566697", "signature": "1232a550ce5ca79877b51587b00381260c39388b96c4df561ecb50733485ba8aca39c7e37a499c1ecf4ec914a54c221224acba9b6236e55bdb085605fee7ef0e" }
     ],
     "receipts": [
-      { "verifierId": "v1", "deployHash": "bb6520be", "linkable": false },
-      { "verifierId": "v2", "deployHash": "e05a3def", "linkable": false },
-      { "verifierId": "v3", "deployHash": "8b8f30d7", "linkable": false }
+      { "verifierId": "v1", "deployHash": "939dba127ddf4cacf444206872d560ac582f9922b62516c63e9dd18e9f7799c4", "linkable": true },
+      { "verifierId": "v2", "deployHash": "e92a84add3e92a729b354d3d002a4db4f42f715bc3f7949ca6d004f5b859ba66", "linkable": true },
+      { "verifierId": "v3", "deployHash": "bab83f8e33ad5362e5c8b358b757871c707555b201018547265b4fe298fa351a", "linkable": true }
     ],
     "quorum": { "yesCount": 3, "required": 2, "met": true },
-    "distributeTx": "6821e0f3e6b01325965562f964047782dab13d4602b7dae7bc7e67c70ac37829",
+    "distributeTx": "b94e0d4f0c1265dcf81888781d8c98da729f75fb33f204a20721306e5e13d31c",
     "payouts": [
       { "holderLabel": "Holder A", "motes": "7000000000" },
       { "holderLabel": "Holder B", "motes": "3000000000" }
@@ -24,14 +24,14 @@
     "status": "halted",
     "reason": "quorum_not_met",
     "verdicts": [
-      { "source": "v1", "verdict": "yes", "observedAmount": "1000000000000", "signer": "21423f386b2700fe0cc65a5bb3bbb8dcadfa1dac6abe89b51f23b0af72c72892", "signature": "bc38ccf263b0dcdf140dd1026045f5e4dcc1e32eacdc3125b8b86051eea769642d35e77947c1915c8ef00970907b1733c82f0f10f296b6175a0e0c0d12351d04" },
-      { "source": "v2", "verdict": "no", "observedAmount": "0", "signer": "d13c0fd57a9f58046fa4527777d3367350c739bc97eb55a21d6452267da65105", "signature": "d7c1a7068f3224028dceba8e587c8a57a8ad0042c1698c7f3327849aad5fb92851cab673f8631bd7e392a8b1052388bd9ba956974e970df6dac067111ffa9b0a" },
-      { "source": "v3", "verdict": "no", "observedAmount": "0", "signer": "4970062de460a171b72fd7546ff17efaaceacf1c615a239cb1e254f736566697", "signature": "7634e2c4a625eda0ae47fd0860eb9f00dc66a7117201d1ac47b158b569689ace6f4d398920f8b4b3ec6ca58ca80bdda347e0adf5e7a3803d8049778877e2640d" }
+      { "source": "v1", "verdict": "yes", "observedAmount": "1000000000000", "signer": "21423f386b2700fe0cc65a5bb3bbb8dcadfa1dac6abe89b51f23b0af72c72892", "signature": "5d9b099791472d82e270c957a397f55a81e0958b2edc12305e1e0e42e30e6a676efff915d29392e52d6a126ea46590d9563c6fcd6f92584a0ee4be0769125301" },
+      { "source": "v2", "verdict": "no", "observedAmount": "0", "signer": "d13c0fd57a9f58046fa4527777d3367350c739bc97eb55a21d6452267da65105", "signature": "8aa3e89f6f602acf5eb805e1776a9e0713ec44103ea0668110db7c97ff6067a55b58d1b78e80e2ca45d74757c5cf568c453247300c6c381d58f2a4a40c5db103" },
+      { "source": "v3", "verdict": "no", "observedAmount": "0", "signer": "4970062de460a171b72fd7546ff17efaaceacf1c615a239cb1e254f736566697", "signature": "4f74e8393b295ad58bedecf400b60800f3972a5ba98e03ada0d34b3960a98ebaf3c6542edc637d0a8ff63220dc549c56a8f3493701a8ea1cd85a9cb24ea5620b" }
     ],
     "receipts": [
-      { "verifierId": "v1", "deployHash": "a02b1c7d2ed52ea82ff68740d9b5a65d9716cee8594b482a13d0c27e846d6a7d", "linkable": true },
-      { "verifierId": "v2", "deployHash": "40a85e53df987e9af3b3e2261833419de84676245332c5fa8570354b8875df93", "linkable": true },
-      { "verifierId": "v3", "deployHash": "8a962e502601c27db98a8195ef6c790f18df25f32c56b40306c02d8f5b4115ff", "linkable": true }
+      { "verifierId": "v1", "deployHash": "974544fabd558e03a7739bd3f052f896bb129b130d0f5f271c8628599d48ed6a", "linkable": true },
+      { "verifierId": "v2", "deployHash": "f6726bd7a09919c2fc7ed8d17c0d605fb25a462209646e20763540863b598c19", "linkable": true },
+      { "verifierId": "v3", "deployHash": "fac7e71e810f8e58d3188a8c52aceb66d0beb3298738e5dcd0e09e91da2f3b2c", "linkable": true }
     ],
     "quorum": { "yesCount": 1, "required": 2, "met": false }
   }

@@ -11,7 +11,7 @@ export const metadata = {
 export default function DemoPage() {
   const asset = getAsset();
   const cycles = getCycles();
-  const happy = cycles.find((c) => c.cycleId === 'happy')!;
+  const happy = cycles.find((c) => c.cycleId === 'happy2')!;
   const fraud = cycles.find((c) => c.cycleId === 'fraud')!;
   const happyReceipt = distributionReceiptForCycle(happy, asset, cycles);
   const reputation = verifierRegistryFromCommitted(asset, cycles);

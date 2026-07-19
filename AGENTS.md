@@ -25,41 +25,39 @@ watch the agent refuse to release funds. That paid-for, independent, on-chain-en
 
 ---
 
-## Current state (as of 2026-07-09)
+## Current state (as of 2026-07-19)
 
-**✅ SHIPPED & submitted** (DoraHacks BUIDL Casper Track). The buildathon qualifier scope is
-complete and proven on-chain.
+**✅ SHIPPED, deployed, proven, and merged to `main`.** The final-round campaign
+(SPEC-1/4/5/6) + the SPEC-2 bonus are built and proven on `casper-test`. The BUIDL is
+under final-round review (deadline 2026-07-26).
 
 | Component | Status |
 | --- | --- |
-| `ServicerVault` (Odra/Rust) | ✅ Deployed `casper-test` (entity `6a6747d2…b27e132`) |
-| Servicer agent (cycle state machine) | ✅ Runs both happy + fraud cycles end-to-end |
-| x402 verifier payments | ✅ Settled on-chain (real CSPR.cloud facilitator) |
+| `ServicerVault` v2 (Odra/Rust) | ✅ Deployed `casper-test` (entity `753a16ea…4d61d7`, package `6356f9d4…`, install `66d3afb3`) |
+| Servicer agent (cycle state machine) | ✅ Runs both happy + fraud cycles end-to-end on v2 |
+| x402 verifier payments | ✅ Settled on-chain (real CSPR.cloud facilitator) — full x402→distribute loop PROVEN on v2 (the earlier loose end is closed) |
 | Verifier services ×3 | ✅ Independent, x402-gated, signed verdicts |
-| Dashboard (issuer + holder views) | ✅ Live balances read from chain |
-| Demo video | ✅ 7 chunks, 2m28s, hosted at `/demo` |
-| Tests | ✅ 90+ (core/adapters/verifiers) + 13 dashboard |
+| Dashboard (issuer + holder views) | ✅ Live balances read from chain; committed-ledger fixtures refreshed to v2 evidence |
+| Demo video + interactive `/demo` | ✅ TryTheFraudDemo walkthrough, ~2 min |
+| Tests | ✅ 192 (41 contract `cargo odra test` + 151 TS: core 25 · dashboard 38 · verifiers 30+29 · agent 30 · adapters 28) |
 
-**Both paths are real and executed on [`testnet.cspr.live`](https://testnet.cspr.live)** — same
-vault + same three verifiers, *only the consensus differs:*
+**Both paths are real and executed on [`testnet.cspr.live`](https://testnet.cspr.live)** on the
+**v2 contract** — same vault + same three verifiers, *only the consensus differs:*
 
 | Path | Consensus | Result | Tx |
 | --- | --- | --- | --- |
-| ✅ Happy | 3/3 → quorum met | Holders **+7 / +3 CSPR** (pro-rata) | [`6821e0f3…c37829`](https://testnet.cspr.live/deploy/6821e0f3e6b01325965562f964047782dab13d4602b7dae7bc7e67c70ac37829) |
-| 🛑 Fraud | 1/3 → quorum NOT met | Agent paid verifiers, **then halted** — holders unchanged | settles `a02b1c7d` / `40a85e53` / `8a962e50` |
+| ✅ Happy (`happy2` cycle — full x402→distribute) | 3/3 → quorum met | Holders **+7 / +3 CSPR** (pro-rata) | distribute [`b94e0d4f…3d31c`](https://testnet.cspr.live/deploy/b94e0d4f0c1265dcf81888781d8c98da729f75fb33f204a20721306e5e13d31c) + 3 settles `939dba12` / `e92a84ad` / `bab83f8e` |
+| 🛑 Fraud | 1/3 → quorum NOT met | Agent paid verifiers, **then halted** — holders unchanged | settles `974544fa` / `f6726bd7` / `fac7e71e` (no distribute) |
+| L3 direct-distribute proof (earlier) | 3/3 → quorum met | cross-side TS-sign→Rust-verify proven on a real Casper host | distribute [`e6fbfb83…66e68`](https://testnet.cspr.live/deploy/e6fbfb83174f15544c860f30068f1ec797a11b3f101dcc1e655b88ee2b666e68) + record_brief `1ff73ae2` |
+
+The **qualifier** contract (`6a6747d2…`, distribute `6821e0f3`) remains on testnet as the L0
+baseline; the v2 contract (`753a16ea…`) carries the full moat stack (on-chain sig verify
+SPEC-4, receipts SPEC-1, reputation SPEC-6, brief SPEC-5). SPEC-2 (Stripe rail adapter) is
+merged; the default demo keeps mocked fixtures, the Stripe rail is exercised with a test-mode key.
 
 **Deployment:** `quittance.rectorspace.com` (Vercel Hobby, GitHub integration, Cloudflare DNS
 grey-cloud). Migrated off Railway on 2026-07-02 (PRs #1, #2). Holder view: `/holder`. Demo: `/demo`.
-
-**Buildathon review status (2026-07-09):** submission is **in review**; final round is invite-only
-(email notification). The Casper hosts posted final-round requirements (DoraHacks msgs
-2026-07-07 / 2026-07-09): public repo, required topics (`casper-blockchain`, `casper-network`,
-`buildathon`), community health files, CodeQL + Dependabot + CI, no High+ alerts, contract
-hashes + sample testnet txs on the BUIDL page. **All in-repo items landed** in PR #3
-(`chore/buildathon-compliance`): community health 50%→100%, CodeQL (JS/TS + actions),
-Dependabot (npm + github-actions, alerts + security updates enabled), and CI
-(build → 121 tests → dashboard build). Hosts warn: keep the repo functional at all times
-during review — a judge may visit mid-change. So: branch → verify green → merge small.
+`main` HEAD `c51a67c` (SPEC-2 merged via PR #35).
 
 ---
 
@@ -214,11 +212,12 @@ These are local agent/tool artifacts, **not** source. Don't rely on, edit, or co
 
 ## Roadmap / next opportunities
 
-The qualifier is shipped. Documented (but not yet built) Final-Round / post-hackathon work:
-- **Real payment-rail adapter spike** — replace a mock verifier with a real data source (Stripe / bank API).
-- **Queryable on-chain receipts** — `Mapping<(AssetId, CycleId), Receipt>` + a `get_receipt` read entrypoint (the qualifier ships the `Distributed` *event* as the receipt; a queryable read endpoint is the enhancement).
+The final-round campaign + SPEC-2 bonus are shipped. Remaining post-hackathon work:
+- **All three verifiers on real rails** — SPEC-2 ships one (Stripe test mode); the remaining two still read fixtures. A bank API + a second processor close the rail set.
+- **Live on-chain READS in the dashboard** — `get_receipt` / `get_verifier_registry` / `get_brief` read entrypoints are built + proven (writes confirmed on-chain) but the dashboard's live CLValue decode is T9-deferred (the dashboard falls back to the honest committed-ledger derivation, now refreshed to v2 evidence). Wiring the live reads is a post-hackathon enhancement.
+- **Stripe live e2e** — the SPEC-2 adapter is unit-tested (injectable `fetch`, incl. an assertion that the outgoing request carries `Authorization: Bearer sk_test_...`); the live e2e against Stripe test mode needs a test-mode API key in the per-repo `.env`.
 - **Multi-asset, multi-cycle** dashboard history.
 - **Verifier marketplace** with staking/slashing (was candidate #2 — explicitly out of scope for the buildathon).
-- **CI / security tooling** — **DONE** (PR #3): `ci.yml` (build + 121 tests + dashboard build), `codeql.yml` (JS/TS + actions, codeql-action v4), `dependabot.yml` (npm per workspace pkg + github-actions). The Rust contract (`cargo odra test`) is **not** in CI yet — needs pinned `nightly-2026-01-01` + cargo-odra + wasm tooling; add a dedicated job if contract churn resumes. The only known advisory is a postcss **moderate** (transitive via `next`, < High) — pinnable via `pnpm.overrides` if desired.
+- **CI / security tooling** — **DONE** (PR #3): `ci.yml` (build + tests + dashboard build), `codeql.yml` (JS/TS + actions), `dependabot.yml` (npm per workspace pkg + github-actions). The Rust contract (`cargo odra test`) is **not** in CI yet — needs pinned `nightly-2026-01-01` + cargo-odra + wasm tooling; add a dedicated job if contract churn resumes. The only known advisory is a postcss **moderate** (transitive via `next`, < High) — pinnable via `pnpm.overrides` if desired. A `vitest-4.1.10` Dependabot bump is open (post-hackathon verify-then-adopt).
 
 Track work in this file's "Current state" section and via the global cross-session TODO.

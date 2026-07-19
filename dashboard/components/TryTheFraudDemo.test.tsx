@@ -7,7 +7,7 @@ import { getAsset, getCycles, distributionReceiptForCycle, verifierRegistryFromC
 // passes) — tests the real integration, not a synthetic fixture.
 const asset = getAsset();
 const cycles = getCycles();
-const happy = cycles.find((c) => c.cycleId === 'happy')!;
+const happy = cycles.find((c) => c.cycleId === 'happy2')!;
 const fraud = cycles.find((c) => c.cycleId === 'fraud')!;
 const happyReceipt = distributionReceiptForCycle(happy, asset, cycles);
 const reputation = verifierRegistryFromCommitted(asset, cycles);
