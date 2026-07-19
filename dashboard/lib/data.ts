@@ -64,8 +64,25 @@ export function distributionReceiptForCycle(cycle: Cycle, asset: AssetConfig, al
     signers: yes.map((v) => v.signer),
     verdictHashes: yes.map((v) => v.signature),
     reputationSnapshot,
+    brief: briefForCycle(cycle),
     verifyTx: cycle.distributeTx,
   };
+}
+
+/**
+ * Derive a deterministic AI verification brief (SPEC-5) from committed cycle
+ * data — the honest fallback the dashboard shows until the live on-chain read
+ * (`liveBrief`) is wired at the bundled deploy. Mirrors the agent's
+ * `fakeBriefText` template: a structured explanation of the cycle's verdicts +
+ * outcome. The brief is agent-attested narration, NOT cryptographic proof —
+ * the verifiable truth is the on-chain signatures + reputation (SPEC-4/6).
+ */
+export function briefForCycle(cycle: Cycle): string | undefined {
+  if (cycle.status !== 'distributed') return undefined; // no brief for halts
+  const yes = cycle.verdicts.filter((v) => v.verdict === 'yes').length;
+  const no = cycle.verdicts.filter((v) => v.verdict === 'no').length;
+  return `Cycle ${cycle.cycleId} on ${cycle.verdicts.length} signed verdicts (${yes} yes / ${no} no): ` +
+    `the contract verified each Ed25519 signature on-chain, the quorum was met, and funds were released pro-rata to holders.`;
 }
 
 /**

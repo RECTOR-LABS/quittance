@@ -93,6 +93,10 @@ export interface DistributionReceipt {
   verdictHashes: string[];
   /** Pre-increment reputation per registered verifier (SPEC-6) — the track record brought to this settlement. */
   reputationSnapshot: VerifierScoreSnapshot[];
+  /** The agent's per-cycle AI verification brief (SPEC-5) — agent-attested
+   *  narration of the cryptographically verified record, NOT proof. Undefined
+   *  for halted cycles (no settlement to anchor to) or when the LLM call failed. */
+  brief?: string;
   /** Deep-link to the on-chain settlement (cspr.live deploy). */
   verifyTx?: string;
 }

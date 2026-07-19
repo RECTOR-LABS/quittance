@@ -1,5 +1,44 @@
 import type { DistributionReceipt, VerifierReputation } from './types';
 
+/**
+ * Reads the on-chain AI verification brief (SPEC-5) for a settled cycle from
+ * the vault contract via `query_state` against the `briefs` named key. SDK-free
+ * raw RPC like `liveDistributionReceipt`.
+ *
+ * NOTE (bundled deploy): the stored `brief` is a `String` CLValue; full
+ * on-chain decode wires when the brief-bearing contract is deployed (bundled
+ * with SPEC-1 + SPEC-4 + SPEC-5 + SPEC-6). Until then this returns null
+ * gracefully so the UI falls back to the committed-ledger brief
+ * (`briefForCycle`) — same philosophy as the receipt + registry reads.
+ * Read-only, no secrets.
+ */
+export async function liveBrief(
+  contractHash: string,
+  assetId: string,
+  cycleId: string,
+): Promise<string | null> {
+  try {
+    const res = await fetch(RPC_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'query_state',
+        params: { key: contractHash, path: ['briefs', `${assetId}:${cycleId}`] },
+      }),
+      cache: 'no-store',
+    });
+    if (!res.ok) return null;
+    const json = await res.json();
+    if (json?.error || !json?.result) return null;
+    // CLValue decode wires at the bundled deploy. Until then, treat any
+    // non-decodable response as "not yet available" → graceful null.
+    return null;
+  } catch {
+    return null;
+  }
+}
 const RPC_URL = process.env.CASPER_NODE_URL ?? 'https://node.testnet.casper.network/rpc';
 
 /**

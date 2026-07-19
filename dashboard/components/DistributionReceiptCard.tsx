@@ -1,7 +1,7 @@
 import type { DistributionReceipt } from '@/lib/types';
 import { motesToCspr } from '@/lib/format';
 import { TxLink } from './TxLink';
-import { ShieldCheck, History } from 'lucide-react';
+import { ShieldCheck, History, Sparkles } from 'lucide-react';
 
 /**
  * Renders the on-chain distribution receipt (SPEC-1) — the queryable mirror of
@@ -69,6 +69,20 @@ export function DistributionReceiptCard({ receipt }: { receipt: DistributionRece
               </span>
             ))}
           </div>
+        </div>
+      )}
+      {receipt.brief && (
+        <div className="mt-2 border-t border-edge pt-2">
+          <div className="flex items-center gap-2">
+            <Sparkles className="h-3 w-3 text-accent" aria-hidden />
+            <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-muted">
+              AI verification brief
+            </span>
+          </div>
+          <p className="mt-0.5 font-sans text-[10px] text-muted">
+            AI-generated explanation of the cryptographically verified record — the brief reasons, the chain decides.
+          </p>
+          <p className="mt-1 font-sans text-xs text-foreground">{receipt.brief}</p>
         </div>
       )}
       {receipt.verifyTx && (

@@ -16,6 +16,7 @@ const receipt: DistributionReceipt = {
     { signer: 'verifier-a', cyclesSeen: 1, cyclesVoted: 1, cyclesAgreed: 1 },
     { signer: 'verifier-b', cyclesSeen: 1, cyclesVoted: 1, cyclesAgreed: 0 },
   ],
+  brief: 'Cycle happy on 3 signed verdicts (3 yes / 0 no): the contract verified each Ed25519 signature on-chain, the quorum was met, and funds were released pro-rata to holders.',
   verifyTx: '6821e0f3e6b01325965562f964047782dab13d4602b7dae7bc7e67c70ac37829',
 };
 
@@ -50,5 +51,17 @@ describe('DistributionReceiptCard', () => {
   it('omits the reputation block when the snapshot is empty', () => {
     render(<DistributionReceiptCard receipt={{ ...receipt, reputationSnapshot: [] }} />);
     expect(screen.queryByText(/reputation at settlement/i)).toBeNull();
+  });
+
+  it('renders the AI verification brief when present (SPEC-5)', () => {
+    render(<DistributionReceiptCard receipt={receipt} />);
+    expect(screen.getByText(/AI verification brief/i)).toBeInTheDocument();
+    expect(screen.getByText(/the brief reasons, the chain decides/i)).toBeInTheDocument();
+    expect(screen.getByText(receipt.brief as string)).toBeInTheDocument();
+  });
+
+  it('omits the brief block when no brief is present', () => {
+    render(<DistributionReceiptCard receipt={{ ...receipt, brief: undefined }} />);
+    expect(screen.queryByText(/AI verification brief/i)).toBeNull();
   });
 });
