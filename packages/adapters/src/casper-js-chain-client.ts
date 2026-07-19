@@ -20,6 +20,8 @@ const {
   CLTypeByteArray,
   CLTypeBool,
   CLTypeString,
+  CLTypeUInt8,
+  CLTypeList,
   ContractCallBuilder,
   ErrorCode,
   HttpHandler,
@@ -225,8 +227,22 @@ function buildEntrypointArgs(entry: string, args: Record<string, unknown>): Args
       const verdicts = expectVerdictArray(args["verdicts"], "verdicts").map((v) =>
         CLValue.newCLValueBool(v),
       );
+      // SPEC-4: each signature is a Casper `Signature` serialized as
+      // `[0x01, <64 raw bytes>]` (65 bytes). The contract stores it as
+      // `Bytes` = `Vec<u8>` (CLType `List(U8)`, length-prefixed) — NOT a fixed
+      // `ByteArray(65)` (which has no length prefix → the contract's
+      // `Vec<u8>` deserialization reads a u32 length from the raw bytes and
+      // `EarlyEndOfStream`s). Encode each sig as a `List(U8)` of the 65 tagged
+      // bytes so the contract's `Vec<Bytes>` = `Vec<Vec<u8>>` = `List(List(U8))`
+      // deserializes cleanly.
       const signatures = expectStringArray(args["signatures"], "signatures").map(
-        (hex) => CLValue.newCLByteArray(sigHexToTaggedBytes(hex, "signature")),
+        (hex) =>
+          CLValue.newCLList(
+            CLTypeUInt8,
+            Array.from(sigHexToTaggedBytes(hex, "signature")).map((b) =>
+              CLValue.newCLUint8(b),
+            ),
+          ),
       );
       const observedAmounts = expectStringArray(args["observed_amounts"], "observed_amounts").map(
         (s) => CLValue.newCLString(s),
@@ -242,7 +258,7 @@ function buildEntrypointArgs(entry: string, args: Record<string, unknown>): Args
         cycle_id: CLValue.newCLString(cycleId),
         signers: CLValue.newCLList(CLTypePublicKey, signers),
         verdicts: CLValue.newCLList(CLTypeBool, verdicts),
-        signatures: CLValue.newCLList(new CLTypeByteArray(65), signatures),
+        signatures: CLValue.newCLList(new CLTypeList(CLTypeUInt8), signatures),
         observed_amounts: CLValue.newCLList(CLTypeString, observedAmounts),
         sources: CLValue.newCLList(CLTypeString, sources),
       });
@@ -250,6 +266,17 @@ function buildEntrypointArgs(entry: string, args: Record<string, unknown>): Args
     case "fund": {
       const assetId = expectString(args["asset_id"], "asset_id");
       return Args.fromMap({ asset_id: CLValue.newCLString(assetId) });
+    }
+    case "record_brief": {
+      // SPEC-5: record_brief(asset_id, cycle_id, brief) — three strings.
+      const assetId = expectString(args["asset_id"], "asset_id");
+      const cycleId = expectString(args["cycle_id"], "cycle_id");
+      const brief = expectString(args["brief"], "brief");
+      return Args.fromMap({
+        asset_id: CLValue.newCLString(assetId),
+        cycle_id: CLValue.newCLString(cycleId),
+        brief: CLValue.newCLString(brief),
+      });
     }
     default:
       if (PASSTHROUGH_ENTRYPOINTS.has(entry)) {

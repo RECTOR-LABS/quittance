@@ -161,13 +161,14 @@ describe("CasperJsChainClient", () => {
       expect(verdictsArg.type.toString()).toMatch(/List of Bool/);
       expect(verdictsArg.list!.elements).toHaveLength(2);
 
-      // signatures -> List of ByteArray(65), each Casper-format [0x01, <64 bytes>].
+      // signatures -> List of List(U8) (Vec<Bytes> = Vec<Vec<u8>> on the contract;
+      // Bytes serializes as a length-prefixed List(U8), not a fixed ByteArray).
       const sigsArg = tx.args.getByName("signatures")!;
-      expect(sigsArg.type.toString()).toBe("(List of ByteArray: 65)");
+      expect(sigsArg.type.toString()).toBe("(List of (List of U8))");
       const sigElems = sigsArg.list!.elements;
       expect(sigElems).toHaveLength(2);
-      expect(Buffer.from(sigElems[0]!.bytes()).toString("hex")).toBe("01" + sigA);
-      expect(Buffer.from(sigElems[1]!.bytes()).toString("hex")).toBe("01" + sigB);
+      expect(Buffer.from(sigElems[0]!.bytes().subarray(4)).toString("hex")).toBe("01" + sigA);
+      expect(Buffer.from(sigElems[1]!.bytes().subarray(4)).toString("hex")).toBe("01" + sigB);
 
       // observed_amounts / sources -> List of String.
       expect(tx.args.getByName("observed_amounts")!.type.toString()).toMatch(/List of String/);
