@@ -79,6 +79,19 @@ pub enum Error {
     ZeroTotalWeight = 8,
     /// The parallel evidence arrays disagree in length (SPEC-4).
     EvidenceArityMismatch = 9,
+    /// `record_brief` called for a `(asset_id, cycle_id)` that already has a
+    /// brief (SPEC-5). The first brief is final — narration is immutable.
+    BriefAlreadyRecorded = 10,
+    /// `record_brief` called for a cycle that has NOT been distributed (SPEC-5) —
+    /// a brief may only anchor to a settled cycle (a receipt must exist).
+    CycleNotSettled = 11,
+    /// `record_brief` called with a brief over the 1024-byte cap (SPEC-5) —
+    /// defends against a runaway LLM bloating on-chain state.
+    BriefTooLong = 12,
+    /// `record_brief` called by an account other than the registered servicer
+    /// key (SPEC-5). The gate is operational (protects narration integrity, not
+    /// funds); the servicer key is captured from the first `register_asset` caller.
+    NotServicer = 13,
 }
 
 /// A cryptographically **verified** signature record, stored in the [`Receipt`]
@@ -190,6 +203,20 @@ pub struct ServicerVault {
     /// tiny (3 in the demo) so a `Var<Vec<PublicKey>>` index is the idiomatic
     /// pattern — a single stored CLValue holding the key list.
     verifier_keys: Var<Vec<PublicKey>>,
+    /// `"{asset_id}:{cycle_id}" -> String` once a brief is recorded (SPEC-5).
+    /// Same colon-joined key as `receipts`/`distributed`. The agent's per-cycle
+    /// AI verification brief — a human-readable explanation of the
+    /// cryptographically verified record. Written by `record_brief`
+    /// (servicer-key-gated, idempotent, anchored to a settled cycle) after a
+    /// successful distribute. Read via [`Self::get_brief`]. The brief is
+    /// agent-attested narration, NOT cryptographic proof.
+    briefs: Mapping<String, String>,
+    /// The authorized servicer key (SPEC-5) — captured from the caller of the
+    /// first `register_asset` (the asset registrar is the servicer in the
+    /// single-operator demo). `record_brief` is gated to this key (operational
+    /// only — protects narration integrity, never funds). Production would use
+    /// proper governance; documented as a residual gap.
+    servicer_key: Var<Address>,
 }
 
 #[odra::module]
@@ -209,6 +236,12 @@ impl ServicerVault {
     ) {
         if self.assets.get(&asset_id).is_some() {
             self.env().revert(Error::AssetAlreadyExists);
+        }
+        // SPEC-5: capture the servicer key from the first `register_asset`
+        // caller (the asset registrar is the servicer in the single-operator
+        // demo). `record_brief` is gated to this key (operational only).
+        if self.servicer_key.get().is_none() {
+            self.servicer_key.set(self.env().caller());
         }
         if holders.is_empty() {
             self.env().revert(Error::EmptyHolders);
@@ -294,6 +327,50 @@ impl ServicerVault {
             .iter()
             .filter_map(|pk| self.verifier_registry.get(pk))
             .collect()
+    }
+
+    /// Record the agent's per-cycle AI verification brief (SPEC-5). The brief is
+    /// a human-readable explanation of the cryptographically verified record —
+    /// agent-attested narration, NOT cryptographic proof (the verifiable truth
+    /// is the on-chain signatures + reputation, SPEC-4/6).
+    ///
+    /// Gates (all operational — protect narration integrity, never funds):
+    /// (a) caller == registered servicer key else [`Error::NotServicer`];
+    /// (b) a receipt must exist for this cycle else [`Error::CycleNotSettled`]
+    ///     (a brief anchors to a settled cycle — no brief for halts);
+    /// (c) idempotent — first brief is final else [`Error::BriefAlreadyRecorded`];
+    /// (d) `brief.len() <= 1024` else [`Error::BriefTooLong`] (state-bloat defense).
+    pub fn record_brief(&mut self, asset_id: String, cycle_id: String, brief: String) {
+        // (a) operational gate — only the servicer may write narration.
+        let servicer = self
+            .servicer_key
+            .get()
+            .unwrap_or_revert_with(self, Error::NotServicer);
+        if self.env().caller() != servicer {
+            self.env().revert(Error::NotServicer);
+        }
+        let key = format!("{asset_id}:{cycle_id}");
+        // (b) anchor — a brief may only be recorded for a settled cycle.
+        if self.receipts.get(&key).is_none() {
+            self.env().revert(Error::CycleNotSettled);
+        }
+        // (c) idempotent — first brief is final.
+        if self.briefs.get(&key).is_some() {
+            self.env().revert(Error::BriefAlreadyRecorded);
+        }
+        // (d) cap — defend against a runaway LLM bloating on-chain state.
+        if brief.len() > 1024 {
+            self.env().revert(Error::BriefTooLong);
+        }
+        self.briefs.set(&key, brief);
+    }
+
+    /// Read the agent's per-cycle AI verification brief (SPEC-5), or `None` if
+    /// no brief was recorded for this cycle (e.g. a halted cycle, or one where
+    /// the LLM call failed post-settle). Read-only; no caller gate; no revert.
+    pub fn get_brief(&self, asset_id: String, cycle_id: String) -> Option<String> {
+        let key = format!("{asset_id}:{cycle_id}");
+        self.briefs.get(&key)
     }
 
     /// Add attached CSPR to `pools[asset_id]`.
@@ -1614,5 +1691,127 @@ mod tests {
         assert_eq!((rep3.cycles_seen, rep3.cycles_voted, rep3.cycles_agreed), (1, 0, 0));
         let rep1 = vault.get_verifier_reputation(vk(1)).unwrap();
         assert_eq!((rep1.cycles_seen, rep1.cycles_voted, rep1.cycles_agreed), (1, 1, 1));
+    }
+
+    // ---- SPEC-5: agentic verification brief (B1–B6) ---------------------
+    //
+    // The servicer key is captured from the `register_asset` caller, which in
+    // OdraVM is the default caller = `get_account(0)` (the same account
+    // `funded_vault` uses as the asset `token`). So `record_brief` called with
+    // the default caller is the servicer; `set_caller(get_account(1))` simulates
+    // a non-servicer for B5.
+
+    // B1. get_brief returns None before any record_brief.
+    #[test]
+    fn get_brief_none_before_record() {
+        let env = odra_test::env();
+        let (mut vault, _alice, _bob) = funded_vault(&env);
+        let (s, v, sg, o, sr) =
+            signed_arrays("inv-1", "c1", &[(1, true, "1000", "bank-api"), (2, true, "1000", "stripe")]);
+        vault.distribute("inv-1".to_string(), "c1".to_string(), s, v, sg, o, sr);
+        // Settled but no brief recorded yet.
+        assert!(vault.get_brief("inv-1".to_string(), "c1".to_string()).is_none());
+    }
+
+    // B2. record_brief after a settled cycle stores it; get_brief returns it.
+    #[test]
+    fn record_brief_stores_and_reads() {
+        let env = odra_test::env();
+        let (mut vault, _alice, _bob) = funded_vault(&env);
+        let (s, v, sg, o, sr) =
+            signed_arrays("inv-1", "c1", &[(1, true, "1000", "bank-api"), (2, true, "1000", "stripe")]);
+        vault.distribute("inv-1".to_string(), "c1".to_string(), s, v, sg, o, sr);
+
+        vault.record_brief(
+            "inv-1".to_string(),
+            "c1".to_string(),
+            "Quorum met: 2/3 verifiers signed yes; funds released pro-rata.".to_string(),
+        );
+        assert_eq!(
+            vault.get_brief("inv-1".to_string(), "c1".to_string()),
+            Some("Quorum met: 2/3 verifiers signed yes; funds released pro-rata.".to_string()),
+        );
+    }
+
+    // B3. record_brief for an unsettled cycle → CycleNotSettled (a brief anchors
+    // to a settled cycle — no brief for halts).
+    #[test]
+    fn record_brief_rejects_unsettled_cycle() {
+        let env = odra_test::env();
+        let (mut vault, _alice, _bob) = funded_vault(&env);
+        // c2 has not been distributed → no receipt.
+        let res = vault.try_record_brief(
+            "inv-1".to_string(),
+            "c2".to_string(),
+            "brief for a cycle that never settled".to_string(),
+        );
+        assert_revert(res, Error::CycleNotSettled);
+    }
+
+    // B4. record_brief twice for the same cycle → BriefAlreadyRecorded (first
+    // brief is final — narration is immutable).
+    #[test]
+    fn record_brief_is_idempotent_first_is_final() {
+        let env = odra_test::env();
+        let (mut vault, _alice, _bob) = funded_vault(&env);
+        let (s, v, sg, o, sr) =
+            signed_arrays("inv-1", "c1", &[(1, true, "1000", "bank-api"), (2, true, "1000", "stripe")]);
+        vault.distribute("inv-1".to_string(), "c1".to_string(), s, v, sg, o, sr);
+
+        vault.record_brief("inv-1".to_string(), "c1".to_string(), "first brief".to_string());
+        let res = vault.try_record_brief(
+            "inv-1".to_string(),
+            "c1".to_string(),
+            "second brief must be rejected".to_string(),
+        );
+        assert_revert(res, Error::BriefAlreadyRecorded);
+        // The first brief is the one on-chain.
+        assert_eq!(
+            vault.get_brief("inv-1".to_string(), "c1".to_string()),
+            Some("first brief".to_string()),
+        );
+    }
+
+    // B5. record_brief by a non-servicer key → NotServicer (operational gate —
+    // protects narration integrity, never funds).
+    #[test]
+    fn record_brief_rejects_non_servicer() {
+        let env = odra_test::env();
+        let (mut vault, _alice, _bob) = funded_vault(&env);
+        let (s, v, sg, o, sr) =
+            signed_arrays("inv-1", "c1", &[(1, true, "1000", "bank-api"), (2, true, "1000", "stripe")]);
+        vault.distribute("inv-1".to_string(), "c1".to_string(), s, v, sg, o, sr);
+
+        // Switch to a non-servicer caller (account 1 ≠ the servicer account 0).
+        env.set_caller(env.get_account(1));
+        let res = vault.try_record_brief(
+            "inv-1".to_string(),
+            "c1".to_string(),
+            "brief from a non-servicer".to_string(),
+        );
+        assert_revert(res, Error::NotServicer);
+        // No brief was written.
+        assert!(vault.get_brief("inv-1".to_string(), "c1".to_string()).is_none());
+    }
+
+    // B6. record_brief over the 1024-byte cap → BriefTooLong (state-bloat
+    // defense against a runaway LLM).
+    #[test]
+    fn record_brief_rejects_overlong_brief() {
+        let env = odra_test::env();
+        let (mut vault, _alice, _bob) = funded_vault(&env);
+        let (s, v, sg, o, sr) =
+            signed_arrays("inv-1", "c1", &[(1, true, "1000", "bank-api"), (2, true, "1000", "stripe")]);
+        vault.distribute("inv-1".to_string(), "c1".to_string(), s, v, sg, o, sr);
+
+        let overlong = "x".repeat(1025);
+        let res = vault.try_record_brief("inv-1".to_string(), "c1".to_string(), overlong);
+        assert_revert(res, Error::BriefTooLong);
+        // A brief at exactly the cap is accepted.
+        vault.record_brief("inv-1".to_string(), "c1".to_string(), "y".repeat(1024));
+        assert_eq!(
+            vault.get_brief("inv-1".to_string(), "c1".to_string()).map(|b| b.len()),
+            Some(1024),
+        );
     }
 }
