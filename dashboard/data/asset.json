@@ -4,13 +4,13 @@
   "expectedCashflowMotes": "1000000000000",
   "narrative": "An SMB receivable. Investors hold fractions and are repaid only when the client's payment is independently verified by a 2-of-3 quorum.",
   "vault": {
-    "entityHash": "6a6747d294af421c11f62b400167580600329c48bfc9cce3c2a76db42b27e132",
-    "packageHash": "fb5225d80e8bc59d7e8581f6be2118e3442ab69eea432d9ad79daf1fbd222d3f",
-    "installTx": "4313f7499d17804a74b38ef9503d18bfd4cbff415606cde5e9fe6e04ef1c4c9e"
+    "entityHash": "753a16eae7bef5c01066a533c7a520bbf145f9bdf55d0e5a73693b7b0a4d61d7",
+    "packageHash": "6356f9d4ad61a369a7defa6975f2e58281c244078b5033eab41e7b3ce149aba1",
+    "installTx": "66d3afb32f28d84f36ccf89b3d6be3dd863eb2c5a76e01e10210e19527f067c9"
   },
   "quorumRequired": 2,
-  "pool": { "fundedMotes": "10000000000", "fundTx": null },
-  "registerTx": null,
+  "pool": { "fundedMotes": "10000000000", "fundTx": "22db74f2c27265b7c44a3b42831dc8c5260fc3122ce889f4e53f5614f3c4fae4" },
+  "registerTx": "19adc74733302931019b423d45f1819d914a92d43cf20d5d44b5575693496764",
   "holders": [
     {
       "label": "Holder A",
