@@ -35,10 +35,11 @@ const GAS_MOTES = 10_000_000_000;      // 10 CSPR gas ceiling (proven sufficient
 const FUND_MOTES = "10000000000";       // 10 CSPR to deposit into the pool
 
 // ServicerVault PACKAGE hash (for proxy-session target — the proxy forwards
-// the call to this package's `fund` entry point).
+// the call to this package's `fund` entry point). Env-driven so a new deploy
+// (new package hash) just updates .env without a code change.
 // NOTE: this is the PACKAGE hash, not the entity hash. The entity hash (used
 // for ContractCallBuilder calls and dict reads) is in SERVICER_VAULT_HASH.
-const VAULT_PKG_HASH = "fb5225d80e8bc59d7e8581f6be2118e3442ab69eea432d9ad79daf1fbd222d3f";
+const VAULT_PKG_HASH = process.env.SERVICER_VAULT_PACKAGE_HASH;
 
 const ASSET_ID = "inv-001";
 

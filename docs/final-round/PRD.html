@@ -1,0 +1,490 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Quittance — Final-Round Improvement PRD</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#0b0d10; --surface:#14171c; --surface-2:#1a1e24;
+  --text:#eceef1; --muted:#949aa6; --faint:#5b626c;
+  --accent:#ff6a1a; --accent-soft:#ffae6b; --accent-dim:rgba(255,106,26,.14);
+  --border:#262b33; --green:#34d399; --red:#f87171; --yellow:#fbbf24;
+  --mono:'IBM Plex Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
+  --sans:'Inter',system-ui,-apple-system,sans-serif;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--text);font-family:var(--sans);font-size:15.5px;line-height:1.65;-webkit-font-smoothing:antialiased}
+.wrap{max-width:900px;margin:0 auto;padding:48px 28px 120px}
+.doc-head{border-bottom:1px solid var(--border);padding-bottom:28px;margin-bottom:36px}
+.eyebrow{font-family:var(--mono);font-size:11.5px;letter-spacing:.18em;text-transform:uppercase;color:var(--accent);margin:0 0 10px}
+h1.title{font-family:var(--mono);font-size:34px;line-height:1.15;margin:0 0 18px;letter-spacing:-.01em;color:#fff}
+.meta{display:flex;flex-wrap:wrap;gap:8px 18px;font-family:var(--mono);font-size:12px;color:var(--muted)}
+.meta b{color:var(--text);font-weight:600}
+.banner{margin:22px 0 0;padding:12px 16px;border:1px solid var(--accent);background:var(--accent-dim);border-radius:8px;font-family:var(--mono);font-size:12.5px;color:var(--accent-soft)}
+.banner b{color:#fff}
+h2{font-family:var(--mono);font-size:20px;margin:46px 0 14px;padding-top:14px;border-top:1px solid var(--border);color:#fff;letter-spacing:-.005em}
+h2:first-of-type{border-top:none;padding-top:0}
+h3{font-family:var(--mono);font-size:15.5px;margin:28px 0 8px;color:var(--accent-soft)}
+h4{font-size:13.5px;margin:18px 0 6px;color:var(--muted);font-weight:600}
+p{margin:12px 0}
+a{color:var(--accent-soft);text-decoration:none;border-bottom:1px solid transparent}
+a:hover{border-bottom-color:var(--accent-soft)}
+strong{color:#fff;font-weight:600}
+em{color:var(--accent-soft);font-style:normal;font-family:var(--mono);font-size:.92em}
+hr{border:none;border-top:1px solid var(--border);margin:34px 0}
+code{font-family:var(--mono);font-size:.86em;background:var(--surface-2);padding:2px 6px;border-radius:4px;color:var(--accent-soft);border:1px solid var(--border)}
+pre{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:18px 20px;overflow-x:auto;margin:18px 0}
+pre code{background:none;border:none;padding:0;color:#dfe3e8;font-size:13px;line-height:1.6}
+blockquote{margin:18px 0;padding:14px 18px;border-left:3px solid var(--accent);background:var(--surface);border-radius:0 8px 8px 0;color:var(--muted)}
+blockquote p{margin:6px 0}
+blockquote strong{color:#fff}
+ul,ol{margin:12px 0;padding-left:22px}
+li{margin:5px 0}
+li::marker{color:var(--accent)}
+.table-scroll{overflow-x:auto;margin:18px 0;border:1px solid var(--border);border-radius:10px}
+table{border-collapse:collapse;width:100%;font-size:13.5px}
+thead{background:var(--surface)}
+th{font-family:var(--mono);font-size:11.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--accent-soft);text-align:left;padding:11px 14px;border-bottom:1px solid var(--border);white-space:nowrap}
+td{padding:11px 14px;border-bottom:1px solid var(--border);vertical-align:top;color:var(--text)}
+tbody tr:last-child td{border-bottom:none}
+tbody tr:hover{background:var(--surface)}
+td code{font-size:.82em}
+.signoff{margin-top:48px;padding:18px 20px;border:1px dashed var(--border);border-radius:10px;font-family:var(--mono);font-size:13px;color:var(--muted);text-align:center}
+.signoff b{color:var(--accent-soft)}
+@media(max-width:640px){.wrap{padding:32px 16px 80px}h1.title{font-size:26px}h2{font-size:18px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="doc-head">
+    <p class="eyebrow">Quittance · Final-Round Campaign</p>
+    <h1 class="title">Quittance — Final-Round Improvement PRD</h1>
+    <div class="meta">
+      <span><b>Event:</b> Casper Agentic Buildathon 2026 — Final Round</span>
+      <span><b>Window:</b> Jul 13 → Jul 26 23:59</span>
+      <span><b>Drafted:</b> 2026-07-18</span>
+    </div>
+    <div class="banner">⬢ <b>STATUS: DRAFT — AWAITING RECTOR'S SIGN-OFF.</b> No SPEC or implementation until this PRD is approved.</div>
+  </header>
+  <main>
+<blockquote>
+<p><strong>Campaign PRD</strong> for the Casper Agentic Buildathon 2026 <strong>Final Round</strong> (Jul 13 → Jul 26 23:59, jury eval).
+<strong>Status:</strong> Final draft for RECTOR's sign-off. <strong>No implementation until approved.</strong>
+<strong>Owner:</strong> RECTOR · <strong>Drafted:</strong> 2026-07-18 · <strong>v4</strong> — code-verified competitive landscape + SPEC-6 (verifier reputation) + SPEC-4 reframed as a real edge.</p>
+<p>Scope note: the qualifier <code>SPEC.md</code> / <code>PLAN.md</code> remain the source of truth for the <strong>shipped build</strong>. This PRD governs <strong>only the final-round deltas.</strong> Strategy is now grounded in <strong>competitor source-code verification</strong>, not README claims.</p>
+</blockquote>
+<hr />
+<h2>At a glance — before → after</h2>
+<table>
+<thead>
+<tr>
+<th>Dimension</th>
+<th>Before (qualifier — shipped)</th>
+<th>After (final-round target)</th>
+<th>Why it matters</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>On-chain verification level</strong></td>
+<td>event-only (L0 — agent attests)</td>
+<td><strong>L3</strong> — contract verifies data-bound Ed25519 verdicts</td>
+<td>Strongest in the field (competitors are L1/L2.5 — code-verified)</td>
+</tr>
+<tr>
+<td><strong>Verifier reputation</strong></td>
+<td>none</td>
+<td>on-chain accuracy/reliability tracking per verifier</td>
+<td><strong>Unique moat</strong> — no competitor has it; Casper's example-#2</td>
+</tr>
+<tr>
+<td><strong>Quorum enforcement</strong></td>
+<td>off-chain (contract trusts servicer key)</td>
+<td>ON-CHAIN, atomic single-tx</td>
+<td>Closes S3; tagline becomes protocol truth</td>
+</tr>
+<tr>
+<td><strong>Agentic AI role</strong></td>
+<td>LLM narrates only</td>
+<td>queryable verification brief per cycle</td>
+<td>Closes the "Agentic AI" rubric gap</td>
+</tr>
+<tr>
+<td><strong>On-chain receipt</strong></td>
+<td><code>Distributed</code> event only</td>
+<td><code>get_receipt()</code> + typed <code>Receipt</code> (sigs + brief)</td>
+<td>Closes S1</td>
+</tr>
+<tr>
+<td><strong>Verifier evidence</strong></td>
+<td>3/3 mocked fixtures</td>
+<td>2 mocked + 1 real (Stripe test mode)</td>
+<td>Closes S2 (optional)</td>
+</tr>
+<tr>
+<td><strong>Launch / socials</strong></td>
+<td>deploy + repo only</td>
+<td>+ project socials, mainnet roadmap, interactive demo</td>
+<td>Closes "Long-Term Launch Plans" gap</td>
+</tr>
+<tr>
+<td><strong>x402 story</strong></td>
+<td>used, under-sold</td>
+<td>front-and-center (67% of prize pool is x402 credits)</td>
+<td>Strategic alignment</td>
+</tr>
+<tr>
+<td><strong>Quorum threshold</strong></td>
+<td>2-of-3, idempotent</td>
+<td><strong>UNCHANGED</strong></td>
+<td>Zero change to the rule</td>
+</tr>
+<tr>
+<td><strong><code>main</code> branch</strong></td>
+<td>frozen, green</td>
+<td>frozen, green</td>
+<td>Discipline holds through Jul 26</td>
+</tr>
+<tr>
+<td><strong>Jury posture</strong></td>
+<td>"agent attests; evidence mocked"</td>
+<td><strong>"chain verifies; verifiers have reputation; one real rail; RWA-native"</strong></td>
+<td>8/8 rubric green</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2>1. North Star</h2>
+<p><strong>Move verification on-chain, give verifiers a reputation, and make the agent's reasoning part of the record — so "verify, not attest" is true at the protocol level, the Agentic AI is load-bearing, and our on-chain logic is the strongest in the finalist field — within 8 days, without endangering the proven build.</strong></p>
+<hr />
+<h2>2. The vertical depth ladder — where is the quorum <em>enforced</em>?</h2>
+<table>
+<thead>
+<tr>
+<th>Level</th>
+<th>Quorum enforced…</th>
+<th>One-liner</th>
+<th>Who's here</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>L0</strong> <em>(shipped qualifier)</em></td>
+<td>off-chain (agent counts 2-of-3)</td>
+<td>"agent attests"</td>
+<td>Quittance (today)</td>
+</tr>
+<tr>
+<td><strong>L1</strong></td>
+<td>off-chain; chain logs proof</td>
+<td>"attests, chain logs"</td>
+<td><strong>AgentPay Guard</strong> (code-verified)</td>
+</tr>
+<tr>
+<td><strong>L2.5</strong></td>
+<td>on-chain address-collation (N separate approve txs; counts callers)</td>
+<td>"chain counts approvals"</td>
+<td><strong>Concordia</strong> (code-verified)</td>
+</tr>
+<tr>
+<td><strong>🔥 L3</strong> <em>(SPEC-4 target)</em></td>
+<td><strong>ON-CHAIN signature verification of data-bound verdicts (atomic)</strong></td>
+<td><strong>"chain verifies sigs"</strong></td>
+<td><strong>Quittance (target)</strong></td>
+</tr>
+<tr>
+<td><strong>L4</strong> <em>(in SPEC-4)</em></td>
+<td>L3 + verdicts bound to <code>(asset, cycle, chain_id)</code> + replay protection</td>
+<td>"chain verifies, fresh"</td>
+<td>Quittance (target)</td>
+</tr>
+<tr>
+<td><strong>L5</strong> <em>(partial)</em></td>
+<td>L4 + genuine verifier independence (distinct operators)</td>
+<td>"chain verifies, independent"</td>
+<td>post-hackathon</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2>3. Competitive landscape <em>(code-verified — read from repo source, not READMEs)</em></h2>
+<table>
+<thead>
+<tr>
+<th>Competitor</th>
+<th>README claim</th>
+<th>Contract reality</th>
+<th>Level</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Concordia DAO Council</strong></td>
+<td>"quorum enforced by the chain itself"</td>
+<td>Address-collation: 3 signer-addresses each submit a separate approve tx; contract counts distinct callers. <strong>No signature verification.</strong> JSON-string receipts. Own comment: <em>"intentionally simple and demo-friendly."</em></td>
+<td><strong>L2.5</strong></td>
+</tr>
+<tr>
+<td><strong>CSPR AgentPay Guard</strong></td>
+<td>"replay protection, policy controls, receipts"</td>
+<td>Contract = proof-anchoring log (<code>record_proof</code>/<code>get_proof</code>). <strong>All policy/replay/budget logic is off-chain.</strong></td>
+<td><strong>L1</strong></td>
+</tr>
+<tr>
+<td><strong>Caspergard</strong></td>
+<td>"AI security layer"</td>
+<td><strong>Repo 404 — unverifiable.</strong></td>
+<td>unknown</td>
+</tr>
+<tr>
+<td><strong>Quittance (post-SPEC-4)</strong></td>
+<td>"contract verifies the quorum"</td>
+<td>On-chain Ed25519 sig verify of data-bound verdicts, atomic single-tx <em>(target)</em></td>
+<td><strong>L3</strong></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Strategic read (verified):</strong>
+- Competitors' on-chain logic is <strong>demo-simple.</strong> SPEC-4 done right makes ours the <strong>strongest on-chain verification in the field</strong> — a real edge (Technical Execution / Working Smart Contracts / Innovation), <em>not</em> parity.
+- <strong>SPEC-6 (verifier reputation) is the unique moat</strong> — neither Concordia nor AgentPay tracks verifier accuracy; it maps directly to Casper's example-direction-#2 wording (<em>"reputation score based on historical accuracy"</em>).
+- <strong>RWA domain is uncontested</strong> — Quittance is the sole project in the track's RWA sweet spot; competitors are DeGov / payment-firewall / security-scanning.</p>
+<p><strong>⚠️ Verification limits (honest):</strong> read from <strong>repo source</strong>, not deployed on-chain wasm (could differ; unlikely). Caspergard unverifiable (repo 404). The field grows over 8 days — this is a snapshot, not the final field. <em>"Verified from source,"</em> not <em>"verified from mainnet"</em> — one rung up from README attestation, not the top.</p>
+<hr />
+<h2>4. Rubric coverage — the 8 jury criteria</h2>
+<table>
+<thead>
+<tr>
+<th>Criterion</th>
+<th>Before</th>
+<th>After</th>
+<th>How</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Technical Execution</td>
+<td>🟡</td>
+<td>🟢</td>
+<td>SPEC-4 (L3, strongest in field) + SPEC-6</td>
+</tr>
+<tr>
+<td>Innovation &amp; Originality</td>
+<td>🟢</td>
+<td>🟢</td>
+<td>verified quorum + reputation for RWA servicing</td>
+</tr>
+<tr>
+<td>Use of AI / Agentic Systems</td>
+<td>🔴</td>
+<td>🟢</td>
+<td>SPEC-5 — AI reasoning brief, on the record</td>
+</tr>
+<tr>
+<td>Real-World Applicability</td>
+<td>🟢</td>
+<td>🟢</td>
+<td>RWA cashflow servicing (DeFi + RWA)</td>
+</tr>
+<tr>
+<td>User Experience &amp; Design</td>
+<td>🟡</td>
+<td>🟢</td>
+<td>receipt aesthetic + interactive "try the fraud" demo</td>
+</tr>
+<tr>
+<td>Working Smart Contracts</td>
+<td>🟢</td>
+<td>🟢</td>
+<td>SPEC-4 + deployed, tested vault</td>
+</tr>
+<tr>
+<td>Long-Term Launch Plans</td>
+<td>🔴</td>
+<td>🟢</td>
+<td>SPEC-3 — socials + mainnet roadmap + positioning</td>
+</tr>
+<tr>
+<td>Potential for Long-Term Impact</td>
+<td>🟢</td>
+<td>🟢</td>
+<td>trust-layer thesis, reputation network vision</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Before: 5/8 strong, 2 red. After: 8/8 green.</strong></p>
+<hr />
+<h2>5. The soft spots (jury attack surface)</h2>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>The attack</th>
+<th>Closed by</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>S3</strong> <em>(deepest)</em></td>
+<td>"The agent counts the quorum off-chain; the contract trusts the servicer key."</td>
+<td><strong>SPEC-4</strong></td>
+</tr>
+<tr>
+<td><strong>S-rep</strong> <em>(moat)</em></td>
+<td>"Who are these verifiers, and why trust them?"</td>
+<td><strong>SPEC-6</strong> (reputation)</td>
+</tr>
+<tr>
+<td><strong>S-ai</strong></td>
+<td>"The AI just narrates — where's the agentic integration?"</td>
+<td><strong>SPEC-5</strong></td>
+</tr>
+<tr>
+<td><strong>S1</strong></td>
+<td>"Distribution is an event — how do I independently verify a receipt?"</td>
+<td>SPEC-1</td>
+</tr>
+<tr>
+<td><strong>S2</strong></td>
+<td>"The verifiers read fake data."</td>
+<td>SPEC-2 (optional)</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2>6. Context</h2>
+<ul>
+<li>Build <strong>SHIPPED, proven on-chain, resubmitted (Under Review)</strong>. Happy 3/3 → distribute; fraud 1/3 → HALT.</li>
+<li><strong>Jury:</strong> Casper Association leadership + technical experts, partner-org reps, Web3 investors, ecosystem leaders, media. <em>(Not pure-security — pitch must land for technical AND non-technical judges.)</em></li>
+<li><strong>Prize pool:</strong> $150K = <strong>$30K cash + $100K x402 Ecosystem Credits + $20K in-kind.</strong> x402 is 67% — Quittance uses it natively; major advantage.</li>
+<li><strong><code>main</code> frozen-discipline</strong> throughout: branch → green → merge small.</li>
+<li><strong>Window:</strong> ~8 days (Jul 18 → Jul 26 23:59). <strong>Demo Day</strong> end of July.</li>
+</ul>
+<hr />
+<h2>7. Goals</h2>
+<ul>
+<li><strong>G1 — On-chain signature verification (SPEC-4).</strong> Contract verifies ≥2 distinct-verifier signed verdicts; servicer key alone can't release funds. Strongest in the field.</li>
+<li><strong>G2 — Verifier reputation (SPEC-6).</strong> On-chain per-verifier accuracy/reliability — the unique moat.</li>
+<li><strong>G3 — Agentic reasoning on the record (SPEC-5).</strong> AI produces a queryable verification brief per cycle.</li>
+<li><strong>G4 — Auditable receipts (SPEC-1).</strong> <code>get_receipt</code> returns signed quorum + brief + amounts.</li>
+<li><strong>G5 — Launch-ready framing (SPEC-3).</strong> Socials + mainnet roadmap + x402 + interactive demo + positioning.</li>
+<li><strong>G6 — One real rail (SPEC-2, optional).</strong> One verifier reads Stripe test mode.</li>
+</ul>
+<hr />
+<h2>8. Non-goals (explicitly fenced out)</h2>
+<ul>
+<li>❌ Verifier <strong>marketplace + staking/slashing economics</strong> <em>(reputation ≠ marketplace — reputation is transparent accuracy tracking, no economics)</em></li>
+<li>❌ <strong>LLM-driven distribution decisions</strong> — quorum stays deterministic; AI reasons, never decides fund release <em>(money requires correctness)</em></li>
+<li>❌ Multi-asset / multi-cycle history</li>
+<li>❌ Full operational verifier independence (distinct operators/companies)</li>
+<li>❌ Mainnet deployment, real funds</li>
+<li>❌ Changing the quorum threshold rule (2-of-3 stays)</li>
+</ul>
+<hr />
+<h2>9. Scope — the moat stack</h2>
+<h3>SPEC-4 — On-chain signature verification <em>(real edge vs demo-simple competitors)</em></h3>
+<p><code>distribute()</code> takes signed verdicts; contract verifies each Ed25519 sig against a registered verifier pubkey, checks <code>(asset_id, cycle_id)</code> binding (replay protection), counts valid distinct-verifier yes-votes, distributes only if ≥2-of-3.
+- <strong>Day-0 spike:</strong> confirm Odra 2.8 exposes Casper Ed25519 verify. Gates SPEC-4.
+- <strong>Reframe (v4):</strong> <em>not</em> parity — competitors are L1/L2.5 (code-verified). This is the strongest on-chain verification in the field.
+- <strong>Success:</strong> forged sig / replayed verdict / servicer key alone → rejected on-chain.</p>
+<h3>SPEC-6 — Verifier reputation/accuracy on-chain <em>(the unique moat — new in v4)</em></h3>
+<p>Track each verifier's historical accuracy/reliability on-chain: per-cycle resolution scores each verifier (agreement-with-outcome + response reliability; accuracy-vs-truth where ground truth is known). Stored in the verifier registry; surfaced on the dashboard.
+- <strong>In:</strong> reputation storage in the registry, per-cycle scoring, dashboard render, tests.
+- <strong>Out:</strong> staking/slashing economics, marketplace selection dynamics (post-hackathon).
+- <strong>Maps to:</strong> Casper example-#2 — <em>"verifiable on-chain identity and reputation score based on historical accuracy."</em>
+- <strong>Success:</strong> a judge sees each verifier's on-chain reputation score; the architecture transparently supports trusting higher-reputation verifiers. Bridges the single-operator residual gap (accuracy is transparent even with one operator).</p>
+<h3>SPEC-1 — Queryable on-chain receipts <em>(storage primitive for SPEC-4/5/6)</em></h3>
+<p><code>Mapping&lt;(AssetId, CycleId), Receipt&gt;</code> written on distribute (sigs + brief + reputation snapshot), <code>get_receipt()</code> read entrypoint, dashboard render.</p>
+<h3>SPEC-5 — Agentic verification brief <em>(closes the Agentic AI gap; parity with Concordia's agentic story)</em></h3>
+<p>LLM produces a per-cycle verification brief (interprets the 3 verdicts, explains the decision, flags anomalies). Stored alongside the receipt (hash pointer), queryable.
+- <strong>In:</strong> LLM call post-quorum, brief storage, dashboard render, prompt + tests.
+- <strong>Out:</strong> LLM-driven distribution decisions. <em>(AI reasons; chain decides.)</em></p>
+<h3>SPEC-3 — Positioning, launch &amp; the interactive demo <em>(amplifier — owns RWA, wins the room)</em></h3>
+<ul>
+<li><strong>Interactive "try the fraud" demo</strong> — one-click: a judge feeds a fake paid claim and watches the chain refuse. Wrapped in a real RWA scenario (tokenized invoice → investors → payout). <em>Concordia's "Chain Says No" is a video; ours is hands-on.</em></li>
+<li><strong>Lead message:</strong> "the contract verifies the quorum; verifiers carry on-chain reputation."</li>
+<li><strong>x402 emphasis</strong> — real settlement evidence front-and-center (67% of prize is x402 credits).</li>
+<li><strong>Position against example-#2</strong> (RWA Oracle Agents w/ Verifiable On-Chain Identity) — explicit mapping.</li>
+<li><strong>Launch plans</strong> — project socials, mainnet roadmap doc, "real project" framing.</li>
+<li>README hashes, BUIDL "Manage Submission" update + sample testnet txs.</li>
+</ul>
+<h3>SPEC-2 — Real payment-rail adapter <em>(optional bonus)</em></h3>
+<p>One verifier reads Stripe test mode; others stay mocked; quorum untouched. Ship only if bandwidth remains.</p>
+<hr />
+<h2>10. Sequencing</h2>
+<pre><code>SPEC-1 (receipts: storage primitive)
+   └─► SPEC-4 (on-chain sig verify — writes sigs into Receipt)
+          └─► SPEC-6 (verifier reputation — the moat)
+                 └─► SPEC-5 (agentic brief — parity)
+                        └─► SPEC-3 (positioning + launch + interactive demo)
+                               └─► SPEC-2 (Stripe — optional)
+</code></pre>
+<p><strong>Minimum credible ship (full rubric coverage + moat):</strong> SPEC-1 + SPEC-4 + SPEC-6 + SPEC-3. SPEC-5 if bandwidth; SPEC-2 is the bonus.</p>
+<hr />
+<h2>11. Operational tasks (non-SPEC)</h2>
+<ul>
+<li><strong>Triage 3 open Security-tab alerts before Jul 26:</strong> 2 Dependabot (esbuild, postcss moderate) + 1 CodeQL. Clear postcss via <code>pnpm.overrides</code>; confirm the CodeQL finding. Requirement is "no High+"; open alerts are a blemish a judge may note.</li>
+</ul>
+<hr />
+<h2>12. Campaign success criteria</h2>
+<ul>
+<li>✅ <code>distribute()</code> requires ≥2 valid distinct-verifier signed verdicts, verified on-chain; servicer key alone cannot release funds.</li>
+<li>✅ Each verifier has an on-chain reputation/accuracy score, queryable.</li>
+<li>✅ Each distributed cycle has a queryable AI verification brief.</li>
+<li>✅ Forged signature, replayed verdict, sub-quorum calls rejected on-chain (tested).</li>
+<li>✅ <code>get_receipt</code> live, readable from dashboard, carrying sigs + brief + reputation.</li>
+<li>✅ Interactive "try the fraud" demo live; README + BUIDL reflect the moat.</li>
+<li>✅ Open Security alerts triaged (no High+).</li>
+<li>✅ <code>main</code> never red; full suite green; quorum threshold logic unchanged.</li>
+</ul>
+<hr />
+<h2>13. Known limitations / residual gaps <em>(honest)</em></h2>
+<p><strong>Deliberate design choices (defensible):</strong>
+- <strong>Determinism &gt; AI autonomy.</strong> LLM reasons (SPEC-5) but never decides distribution.
+- <strong>Single-operator verifiers (demo).</strong> All 3 run by RECTOR. SPEC-4 (distinct keys) + SPEC-6 (transparent reputation) make collusion <em>harder</em> and <em>visible</em>, not operationally impossible.</p>
+<p><strong>Time-bounded (post-hackathon):</strong>
+- True verifier independence (distinct operators) + marketplace/staking economics.
+- All 3 verifiers on real rails (SPEC-2 ships 1).
+- Professional security audit (SPEC-4 is audit-<em>ready</em>, not audited).
+- Multi-asset / multi-cycle scale.</p>
+<p><strong>Fundamental to a hackathon demo (disclosed):</strong>
+- Test asset (WCSPR), no real cashflow/invoice. Testnet only.</p>
+<p><strong>After the campaign:</strong> every rubric criterion green, every soft spot closed, a unique moat (SPEC-6), and the strongest on-chain verification in the field (SPEC-4, code-verified vs competitors). What remains is honest boundary, not oversight.</p>
+<hr />
+<h2>14. Constraints (carry into every SPEC)</h2>
+<ul>
+<li><strong>Chain/SDK:</strong> Casper 2.0 <code>casper-test</code>, TransactionV1, Odra 2.8.x (<code>nightly-2026-01-01</code>), <code>casper-js-sdk</code> v5, x402 <code>PAYMENT-SIGNATURE</code> header.</li>
+<li><strong>Signing:</strong> headless EIP-712 / Ed25519 verdict signing already solved (repo gotcha #3) — SPEC-4 <em>verifies</em> those on-chain.</li>
+<li><strong>Testnet only.</strong> Stripe = test-mode keys only. No real funds, ever.</li>
+<li><strong>Frozen-<code>main</code>:</strong> branch → CI green (build + 121 tests + dashboard build + CodeQL) → merge small.</li>
+<li><strong>Secrets:</strong> per-repo <code>.env</code> (symlinked to <code>~/Documents/secret/quittance/.env</code>), never hardcoded.</li>
+<li><strong>No AI attribution.</strong> Honest disclosure maintained/expanded.</li>
+<li><strong>Low-frequency x402:</strong> handful-of-calls-per-cycle by construction.</li>
+</ul>
+<hr />
+<h2>15. Open questions (resolve at SPEC time)</h2>
+<ul>
+<li><strong>Q1 (SPEC-4, day-0) — Sig verify in Odra:</strong> does Odra 2.8 expose Casper's native Ed25519 verify? Spike first — gates SPEC-4. <em>(Fallback: additive <code>verify_quorum</code> read endpoint.)</em></li>
+<li><strong>Q2 (SPEC-4) — Verifier registry governance:</strong> who adds/removes verifiers? Demo: servicer key + emitted events.</li>
+<li><strong>Q3 (SPEC-4) — Verdict struct:</strong> <code>(asset_id, cycle_id, verdict, commit)</code> via EIP-712 over <code>casper:*</code> CAIP-2 (reuse solved scheme).</li>
+<li><strong>Q4 (SPEC-6) — Reputation signal:</strong> agreement-with-outcome + response reliability (always measurable) + accuracy-vs-truth (where ground truth known in demo)? <em>(Lean: yes — layered signal.)</em></li>
+<li><strong>Q5 (SPEC-6) — Scoring math:</strong> simple ratio vs EWMA decay? <em>(Lean: simple ratio for demo; EWMA documented as the production design.)</em></li>
+<li><strong>Q6 (SPEC-5) — Brief storage:</strong> on-chain vs IPFS hash pointer? <em>(Lean: IPFS hash — keeps chain lean.)</em></li>
+<li><strong>Q7 (campaign) — Deploy vs upgrade:</strong> new vault deploy (new hash → BUIDL update) vs Odra package upgrade (same hash)? <em>(Resolve SPEC-4 day 0 alongside Q1.)</em></li>
+<li><strong>Q8 (SPEC-2) — Stripe resource:</strong> <code>PaymentIntent</code> vs <code>Invoice</code> vs <code>Charge</code>?</li>
+</ul>
+<hr />
+<h2>16. What "done" looks like at Jul 26</h2>
+<p>A judge evaluating Quittance sees the <strong>strongest on-chain verification in the finalist field</strong> (code-verified vs demo-simple competitors), a <strong>unique verifier-reputation moat</strong> no competitor matches, <strong>8/8 rubric criteria green</strong>, an <strong>interactive demo</strong> where they personally watch the chain refuse a fraudulent claim, and a <strong>RWA-native, x402-native, launch-ready</strong> project. "Verify, not attest" is a protocol property backed by signatures <em>and</em> reputation — and <code>main</code> stayed green the whole time.</p>
+<p><strong>Realistic outcome (honest):</strong> 8/8 rubric green; <strong>#1 confidence ~7–8/10 with clean execution</strong> (up from ~5) — a genuine likely-winner position. Not 9.5+ — irreducible variance (Concordia's agentic branding, judging subjectivity, a growing field) caps any entry. The residual gaps are honest, disclosed, and post-hackathon.</p>
+<hr />
+<p><em>Approve this PRD to unlock SPEC-1 + SPEC-4 (day-0 spike first). Sign-off fixes scope; the SPECs fix design.</em></p>
+  </main>
+  <div class="signoff">Approve this PRD to unlock <b>SPEC-1</b>.<br>Sign-off fixes scope · the SPECs fix design.</div>
+</div>
+</body>
+</html>

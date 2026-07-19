@@ -1,10 +1,11 @@
-import type { Cycle } from '@/lib/types';
+import type { Cycle, DistributionReceipt } from '@/lib/types';
 import { motesToCspr } from '@/lib/format';
 import { VerdictCard } from './VerdictCard';
 import { QuorumGate } from './QuorumGate';
 import { TxLink } from './TxLink';
+import { DistributionReceiptCard } from './DistributionReceiptCard';
 
-export function CycleCard({ cycle }: { cycle: Cycle }) {
+export function CycleCard({ cycle, receipt }: { cycle: Cycle; receipt?: DistributionReceipt }) {
   const receiptFor = (id: string) => cycle.receipts.find((r) => r.verifierId === id);
   const distributed = cycle.status === 'distributed';
   return (
@@ -39,6 +40,7 @@ export function CycleCard({ cycle }: { cycle: Cycle }) {
                   receipt <TxLink kind="deploy" hash={cycle.distributeTx} />
                 </div>
               )}
+              {receipt && <DistributionReceiptCard receipt={receipt} />}
             </div>
           ) : (
             <div>

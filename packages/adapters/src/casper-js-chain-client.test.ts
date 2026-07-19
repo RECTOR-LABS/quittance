@@ -103,14 +103,14 @@ const CONTRACT_HASH = "0".repeat(64);
 
 describe("CasperJsChainClient", () => {
   describe("callEntrypoint — distribute encoding", () => {
-    it("builds a distribute tx with hex signers tagged to PublicKey and hashes as [u8;32], returning the put hash", async () => {
+    it("builds a distribute tx with the SPEC-4 parallel-arrays evidence, returning the put hash", async () => {
       const { pem } = ephemeralPem();
       // Two raw 32-byte Ed25519 hexes (no tag) — exactly the PublicKeyHex form.
       const signerA = freshKeypair().publicKeyHex;
       const signerB = freshKeypair().publicKeyHex;
-      // Two 64-char verdict hashes.
-      const hashA = "11".repeat(32);
-      const hashB = "22".repeat(32);
+      // Two 128-char (64-byte) raw Ed25519 signature hexes.
+      const sigA = "aa".repeat(64);
+      const sigB = "bb".repeat(64);
 
       let captured: Transaction | undefined;
       const { rpc, putTransaction } = mockRpc({
@@ -125,7 +125,10 @@ describe("CasperJsChainClient", () => {
         asset_id: "inv-1",
         cycle_id: "c1",
         signers: [signerA, signerB],
-        verdict_hashes: [hashA, hashB],
+        verdicts: ["yes", "yes"],
+        signatures: [sigA, sigB],
+        observed_amounts: ["1000", "1000"],
+        sources: ["bank-api", "stripe"],
       });
 
       expect(res.txHash).toBe("deadbeef01");
@@ -153,19 +156,29 @@ describe("CasperJsChainClient", () => {
       expect(elems[0]!.publicKey!.toHex()).toBe("01" + signerA);
       expect(elems[1]!.publicKey!.toHex()).toBe("01" + signerB);
 
-      // verdict_hashes -> List of [u8;32] byte arrays with the raw decoded bytes.
-      const hashesArg = tx.args.getByName("verdict_hashes")!;
-      expect(hashesArg.type.toString()).toBe("(List of ByteArray: 32)");
-      const hashElems = hashesArg.list!.elements;
-      expect(hashElems).toHaveLength(2);
-      expect(Buffer.from(hashElems[0]!.bytes()).toString("hex")).toBe(hashA);
-      expect(Buffer.from(hashElems[1]!.bytes()).toString("hex")).toBe(hashB);
+      // verdicts -> List of Bool.
+      const verdictsArg = tx.args.getByName("verdicts")!;
+      expect(verdictsArg.type.toString()).toMatch(/List of Bool/);
+      expect(verdictsArg.list!.elements).toHaveLength(2);
+
+      // signatures -> List of List(U8) (Vec<Bytes> = Vec<Vec<u8>> on the contract;
+      // Bytes serializes as a length-prefixed List(U8), not a fixed ByteArray).
+      const sigsArg = tx.args.getByName("signatures")!;
+      expect(sigsArg.type.toString()).toBe("(List of (List of U8))");
+      const sigElems = sigsArg.list!.elements;
+      expect(sigElems).toHaveLength(2);
+      expect(Buffer.from(sigElems[0]!.bytes().subarray(4)).toString("hex")).toBe("01" + sigA);
+      expect(Buffer.from(sigElems[1]!.bytes().subarray(4)).toString("hex")).toBe("01" + sigB);
+
+      // observed_amounts / sources -> List of String.
+      expect(tx.args.getByName("observed_amounts")!.type.toString()).toMatch(/List of String/);
+      expect(tx.args.getByName("sources")!.type.toString()).toMatch(/List of String/);
 
       // The tx was signed (one approval) before being sent.
       expect(tx.approvals.length).toBe(1);
     });
 
-    it("rejects a malformed verdict hash (not 64 hex chars) with a specific error", async () => {
+    it("rejects a malformed signature (not 128 hex chars) with a specific error", async () => {
       const { pem } = ephemeralPem();
       const { rpc } = mockRpc();
       const client = new CasperJsChainClient(clientConfig(pem), { rpc });
@@ -175,9 +188,12 @@ describe("CasperJsChainClient", () => {
           asset_id: "inv-1",
           cycle_id: "c1",
           signers: [freshKeypair().publicKeyHex],
-          verdict_hashes: ["abcd"], // too short
+          verdicts: ["yes"],
+          signatures: ["abcd"], // too short (not 128 hex chars)
+          observed_amounts: ["1000"],
+          sources: ["bank-api"],
         }),
-      ).rejects.toThrow(/verdict_hashes.*32|hash.*hex|hex.*32/i);
+      ).rejects.toThrow(/signature.*128|64-byte/i);
     });
 
     it("rejects a malformed signer hex with a specific error", async () => {
@@ -190,9 +206,30 @@ describe("CasperJsChainClient", () => {
           asset_id: "inv-1",
           cycle_id: "c1",
           signers: ["nothex"],
-          verdict_hashes: ["33".repeat(32)],
+          verdicts: ["yes"],
+          signatures: ["aa".repeat(64)],
+          observed_amounts: ["1000"],
+          sources: ["bank-api"],
         }),
       ).rejects.toThrow(/signer|public.?key|hex/i);
+    });
+
+    it("rejects a malformed verdict (not yes/no) with a specific error", async () => {
+      const { pem } = ephemeralPem();
+      const { rpc } = mockRpc();
+      const client = new CasperJsChainClient(clientConfig(pem), { rpc });
+
+      await expect(
+        client.callEntrypoint(CONTRACT_HASH, "distribute", {
+          asset_id: "inv-1",
+          cycle_id: "c1",
+          signers: [freshKeypair().publicKeyHex],
+          verdicts: ["maybe"], // not yes/no
+          signatures: ["aa".repeat(64)],
+          observed_amounts: ["1000"],
+          sources: ["bank-api"],
+        }),
+      ).rejects.toThrow(/verdicts.*yes.*no/i);
     });
   });
 

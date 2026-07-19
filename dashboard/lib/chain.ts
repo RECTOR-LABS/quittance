@@ -1,3 +1,44 @@
+import type { DistributionReceipt, VerifierReputation } from './types';
+
+/**
+ * Reads the on-chain AI verification brief (SPEC-5) for a settled cycle from
+ * the vault contract via `query_state` against the `briefs` named key. SDK-free
+ * raw RPC like `liveDistributionReceipt`.
+ *
+ * NOTE (bundled deploy): the stored `brief` is a `String` CLValue; full
+ * on-chain decode wires when the brief-bearing contract is deployed (bundled
+ * with SPEC-1 + SPEC-4 + SPEC-5 + SPEC-6). Until then this returns null
+ * gracefully so the UI falls back to the committed-ledger brief
+ * (`briefForCycle`) — same philosophy as the receipt + registry reads.
+ * Read-only, no secrets.
+ */
+export async function liveBrief(
+  contractHash: string,
+  assetId: string,
+  cycleId: string,
+): Promise<string | null> {
+  try {
+    const res = await fetch(RPC_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'query_state',
+        params: { key: contractHash, path: ['briefs', `${assetId}:${cycleId}`] },
+      }),
+      cache: 'no-store',
+    });
+    if (!res.ok) return null;
+    const json = await res.json();
+    if (json?.error || !json?.result) return null;
+    // CLValue decode wires at the bundled deploy. Until then, treat any
+    // non-decodable response as "not yet available" → graceful null.
+    return null;
+  } catch {
+    return null;
+  }
+}
 const RPC_URL = process.env.CASPER_NODE_URL ?? 'https://node.testnet.casper.network/rpc';
 
 /**
@@ -22,6 +63,84 @@ export async function liveBalanceMotes(publicKeyHex: string): Promise<string | n
     const json = await res.json();
     const balance = json?.result?.balance;
     return typeof balance === 'string' ? balance : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Reads the on-chain verifier registry (SPEC-6) from the vault contract via
+ * `query_state`. SDK-free raw RPC like `liveDistributionReceipt`.
+ *
+ * NOTE (bundled deploy): the stored `verifier_registry` is a `Mapping` + the
+ * `verifier_keys` index is a `Var<Vec<PublicKey>>`; full on-chain CLValue decode
+ * wires when the reputation-bearing contract is deployed (bundled with
+ * SPEC-1 + SPEC-4 + SPEC-6). Until then this returns null gracefully so the
+ * UI falls back to the committed-ledger reputation (`verifierRegistryFromCommitted`)
+ * — same philosophy as the receipt read. Read-only, no secrets.
+ */
+export async function liveVerifierRegistry(
+  contractHash: string,
+): Promise<VerifierReputation[] | null> {
+  try {
+    const res = await fetch(RPC_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'query_state',
+        params: { key: contractHash, path: ['verifier_keys'] },
+      }),
+      cache: 'no-store',
+    });
+    if (!res.ok) return null;
+    const json = await res.json();
+    if (json?.error || !json?.result) return null;
+    // CLValue decode wires at the bundled deploy. Until then, treat any
+    // non-decodable response as "not yet available" → graceful null.
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Reads the on-chain distribution receipt (SPEC-1) for a settled cycle from the
+ * vault contract via `query_state`. SDK-free raw RPC like `liveBalanceMotes`.
+ *
+ * NOTE (T9 wiring): the stored `Receipt` is a typed CLValue struct; full
+ * on-chain CLValue decode is wired once the receipt-bearing contract is
+ * deployed (SPEC-1 T9). Until then this returns null gracefully so the UI
+ * falls back to the committed-ledger receipt — same philosophy as the balance
+ * read. Read-only, no secrets.
+ */
+export async function liveDistributionReceipt(
+  contractHash: string,
+  assetId: string,
+  cycleId: string,
+): Promise<DistributionReceipt | null> {
+  try {
+    const res = await fetch(RPC_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'query_state',
+        params: {
+          key: contractHash,
+          path: ['receipts', `${assetId}:${cycleId}`],
+        },
+      }),
+      cache: 'no-store',
+    });
+    if (!res.ok) return null;
+    const json = await res.json();
+    if (json?.error || !json?.result) return null;
+    // CLValue decode wires at T9 (receipt-bearing contract deployed). Until then,
+    // treat any non-decodable response as "not yet available" → graceful null.
+    return null;
   } catch {
     return null;
   }

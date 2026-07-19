@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { getAsset, getCycles } from './data';
+import { getAsset, getCycles, verifierRegistryFromCommitted, distributionReceiptForCycle } from './data';
 
 describe('data ledger', () => {
   it('loads the asset config', () => {
@@ -20,5 +20,38 @@ describe('data ledger', () => {
     expect(fraud.quorum.met).toBe(false);
     expect(fraud.status).toBe('halted');
     expect(fraud.distributeTx).toBeUndefined();
+  });
+});
+
+describe('verifierRegistryFromCommitted (SPEC-6)', () => {
+  it('scores only the distributed cycle (halted cycles don\u0027t score)', () => {
+    const asset = getAsset();
+    const cycles = getCycles();
+    const reputation = verifierRegistryFromCommitted(asset, cycles);
+    expect(reputation).toHaveLength(3);
+    // The happy cycle (3 yes) settles -> every verifier seen+1, voted+1, agreed+1.
+    // The fraud cycle (1 yes / 2 no) halts -> contributes nothing (SPEC-6 §7).
+    for (const r of reputation) {
+      expect(r.cyclesSeen).toBe(1); // only the happy cycle scored
+      expect(r.cyclesVoted).toBe(1);
+      expect(r.cyclesAgreed).toBe(1);
+      expect(r.lastVerdict).toBe('yes'); // the happy cycle's verdict
+      expect(r.lastCycle).toBe('happy');
+    }
+  });
+});
+
+describe('distributionReceiptForCycle reputation snapshot (SPEC-6)', () => {
+  it('happy cycle snapshot is pre-increment (zero — first distributed cycle)', () => {
+    const asset = getAsset();
+    const cycles = getCycles();
+    const happy = cycles.find((c) => c.cycleId === 'happy')!;
+    const receipt = distributionReceiptForCycle(happy, asset, cycles);
+    expect(receipt.reputationSnapshot).toHaveLength(3);
+    for (const s of receipt.reputationSnapshot) {
+      expect(s.cyclesSeen).toBe(0); // no prior distributed cycles
+      expect(s.cyclesVoted).toBe(0);
+      expect(s.cyclesAgreed).toBe(0);
+    }
   });
 });

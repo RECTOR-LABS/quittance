@@ -18,6 +18,10 @@ const {
   CLValue,
   CLTypePublicKey,
   CLTypeByteArray,
+  CLTypeBool,
+  CLTypeString,
+  CLTypeUInt8,
+  CLTypeList,
   ContractCallBuilder,
   ErrorCode,
   HttpHandler,
@@ -147,6 +151,31 @@ function publicKeyHexToPublicKey(hex: string): PublicKeyT {
   return PublicKey.fromHex(`01${hex}`);
 }
 
+/** Decode a 128-char hex string (raw 64-byte Ed25519 signature) to its
+ *  Casper-format bytes: prepend the Ed25519 algorithm tag `01` -> 65 bytes.
+ *  `Signature::from_bytes` on-chain expects this tagged form (SPEC-4). */
+function sigHexToTaggedBytes(hex: string, label: string): Uint8Array {
+  if (typeof hex !== "string" || !/^[0-9a-fA-F]{128}$/.test(hex)) {
+    throw new Error(
+      `${label} must be a 128-char (64-byte) Ed25519 signature hex string, got ${JSON.stringify(hex)}`,
+    );
+  }
+  const bytes = new Uint8Array(65);
+  bytes[0] = 0x01; // ED25519_TAG
+  for (let i = 0; i < 64; i++) {
+    bytes[i + 1] = Number.parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+  }
+  return bytes;
+}
+
+/** Narrow an `args` value to an array of "yes"/"no" verdicts, mapped to bool. */
+function expectVerdictArray(value: unknown, field: string): boolean[] {
+  if (!Array.isArray(value) || value.some((v) => v !== "yes" && v !== "no")) {
+    throw new Error(`${field} must be an array of "yes" | "no" strings`);
+  }
+  return (value as string[]).map((v) => v === "yes");
+}
+
 /** Narrow an `args` value to a non-empty array of strings. */
 function expectStringArray(value: unknown, field: string): string[] {
   if (!Array.isArray(value) || value.some((v) => typeof v !== "string")) {
@@ -169,7 +198,7 @@ function expectString(value: unknown, field: string): string {
  * Two of the contract's entrypoints are on the agent's runtime path and carry
  * the hex-string encoding boundary, so they get a fully-typed mapper that
  * converts the agent's hex `args` into the exact CLValues the ABI expects:
- *   - `distribute(asset_id, cycle_id, verdict_hashes: Vec<[u8;32]>, signers: Vec<PublicKey>)`
+ *   - `distribute(asset_id, cycle_id, signers: Vec<PublicKey>, verdicts: Vec<bool>, signatures: Vec<[u8;65]>, observed_amounts: Vec<String>, sources: Vec<String>)`  // SPEC-4: on-chain sig verify
  *   - `fund(asset_id)`
  *
  * `register_asset` is a one-time deploy-time setup call (NOT on the agent's
@@ -187,11 +216,39 @@ function buildEntrypointArgs(entry: string, args: Record<string, unknown>): Args
     case "distribute": {
       const assetId = expectString(args["asset_id"], "asset_id");
       const cycleId = expectString(args["cycle_id"], "cycle_id");
+      // SPEC-4: the contract verifies each verifier's Ed25519 signature
+      // on-chain, so the agent presents the per-verifier evidence as five
+      // parallel arrays (one entry per verifier). Each array is a CLList of a
+      // primitive -- the SDK-encodable shape (Odra structs have no generic
+      // builder). The signature bytes are Casper-format ([0x01, <64 bytes>]).
       const signers = expectStringArray(args["signers"], "signers").map((hex) =>
         CLValue.newCLPublicKey(publicKeyHexToPublicKey(hex)),
       );
-      const verdictHashes = expectStringArray(args["verdict_hashes"], "verdict_hashes").map(
-        (hex) => CLValue.newCLByteArray(hashHexToBytes(hex, "verdict_hashes entry")),
+      const verdicts = expectVerdictArray(args["verdicts"], "verdicts").map((v) =>
+        CLValue.newCLValueBool(v),
+      );
+      // SPEC-4: each signature is a Casper `Signature` serialized as
+      // `[0x01, <64 raw bytes>]` (65 bytes). The contract stores it as
+      // `Bytes` = `Vec<u8>` (CLType `List(U8)`, length-prefixed) — NOT a fixed
+      // `ByteArray(65)` (which has no length prefix → the contract's
+      // `Vec<u8>` deserialization reads a u32 length from the raw bytes and
+      // `EarlyEndOfStream`s). Encode each sig as a `List(U8)` of the 65 tagged
+      // bytes so the contract's `Vec<Bytes>` = `Vec<Vec<u8>>` = `List(List(U8))`
+      // deserializes cleanly.
+      const signatures = expectStringArray(args["signatures"], "signatures").map(
+        (hex) =>
+          CLValue.newCLList(
+            CLTypeUInt8,
+            Array.from(sigHexToTaggedBytes(hex, "signature")).map((b) =>
+              CLValue.newCLUint8(b),
+            ),
+          ),
+      );
+      const observedAmounts = expectStringArray(args["observed_amounts"], "observed_amounts").map(
+        (s) => CLValue.newCLString(s),
+      );
+      const sources = expectStringArray(args["sources"], "sources").map((s) =>
+        CLValue.newCLString(s),
       );
       // Named runtime args are dispatched by NAME on-chain (Odra reads each
       // param via get_named_arg), so insertion order is not load-bearing; we
@@ -199,13 +256,27 @@ function buildEntrypointArgs(entry: string, args: Record<string, unknown>): Args
       return Args.fromMap({
         asset_id: CLValue.newCLString(assetId),
         cycle_id: CLValue.newCLString(cycleId),
-        verdict_hashes: CLValue.newCLList(new CLTypeByteArray(32), verdictHashes),
         signers: CLValue.newCLList(CLTypePublicKey, signers),
+        verdicts: CLValue.newCLList(CLTypeBool, verdicts),
+        signatures: CLValue.newCLList(new CLTypeList(CLTypeUInt8), signatures),
+        observed_amounts: CLValue.newCLList(CLTypeString, observedAmounts),
+        sources: CLValue.newCLList(CLTypeString, sources),
       });
     }
     case "fund": {
       const assetId = expectString(args["asset_id"], "asset_id");
       return Args.fromMap({ asset_id: CLValue.newCLString(assetId) });
+    }
+    case "record_brief": {
+      // SPEC-5: record_brief(asset_id, cycle_id, brief) — three strings.
+      const assetId = expectString(args["asset_id"], "asset_id");
+      const cycleId = expectString(args["cycle_id"], "cycle_id");
+      const brief = expectString(args["brief"], "brief");
+      return Args.fromMap({
+        asset_id: CLValue.newCLString(assetId),
+        cycle_id: CLValue.newCLString(cycleId),
+        brief: CLValue.newCLString(brief),
+      });
     }
     default:
       if (PASSTHROUGH_ENTRYPOINTS.has(entry)) {

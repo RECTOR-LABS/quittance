@@ -13,7 +13,8 @@
 <p align="center">
   <b>Autonomous, verification-gated servicing for tokenized real-world cashflows on Casper.</b><br>
   An autonomous agent and on-chain vault that release a tokenized cashflow to its holders
-  <i>only after independently verifying the money actually arrived</i> — <b>verification, not attestation</b>.
+  <i>only after independently verifying the money actually arrived</i> — <b>verification, not attestation</b>.<br>
+  The contract verifies the quorum <b>on-chain</b>; verifiers carry <b>on-chain reputation</b>; the AI explains — the chain decides.
 </p>
 
 <p align="center">
@@ -28,6 +29,10 @@
 - [The insight](#the-insight-verify-not-attest)
 - [How it works](#how-it-works)
 - [The demonstrable moment](#the-demonstrable-moment)
+- [The depth ladder](#the-depth-ladder--where-the-quorum-is-enforced)
+- [The moat stack](#the-moat-stack)
+- [x402 — native, not bolted on](#x402--native-not-bolted-on)
+- [Casper example-direction-#2](#casper-example-direction-2)
 - [Proven on-chain](#proven-on-chain-casper-test)
 - [See it live](#see-it-live)
 - [Architecture](#architecture)
@@ -55,8 +60,8 @@ Each cycle, the autonomous servicer agent:
 1. **Detects** a cycle is due for a tokenized asset.
 2. **Pays three independent verifiers over [x402](https://x402.org)** to answer: *"did the cashflow arrive?"* — real, per-call economic commitment, settled on Casper.
 3. **Requires a 2-of-3 quorum** of signed yes/no verdicts.
-4. **If met** → calls the vault's quorum-gated `distribute()`, paying holders pro-rata on-chain, and writes a verifiable receipt (signers + verdict hashes in the event).
-5. **If not** → **halts, pays out nothing, flags a dispute.**
+4. **If met** → calls the vault's `distribute()`, which **verifies each Ed25519 verdict signature on-chain** (SPEC-4), pays holders pro-rata, writes a verifiable **receipt** (SPEC-1), scores each verifier's **on-chain reputation** (SPEC-6), and the agent records an **AI verification brief** (SPEC-5) explaining the cycle.
+5. **If not** → **halts, pays out nothing, flags a dispute** — and writes no receipt, scores no reputation, records no brief.
 
 ```
 detect cycle → pay 3 verifiers (x402) → 2-of-3 quorum?
@@ -66,7 +71,42 @@ detect cycle → pay 3 verifiers (x402) → 2-of-3 quorum?
 
 ## The demonstrable moment
 
-Feed a fake *"paid"* claim through one compromised verifier and watch the agent **refuse to release the funds**. That refusal — paid-for, independent, and enforced on-chain — is the whole product.
+Feed a fake *"paid"* claim through one compromised verifier and watch the agent **refuse to release the funds**. That refusal — paid-for, independent, and enforced on-chain — is the whole product. **[Try it interactively →](https://quittance.rectorspace.com/demo)**
+
+## The depth ladder — where the quorum is *enforced*
+
+| Level | Quorum enforced… | Who's here |
+| --- | --- | --- |
+| **L0** *(qualifier)* | off-chain (agent counts 2-of-3) | Quittance (shipped) |
+| **L1** | off-chain; chain logs proof | AgentPay Guard (code-verified) |
+| **L2.5** | on-chain address-collation (counts callers) | Concordia (code-verified) |
+| **🔥 L3** *(final-round)* | **ON-CHAIN signature verification of data-bound verdicts (atomic)** | **Quittance (SPEC-4)** |
+| **L4** | L3 + verdicts bound to `(asset, cycle)` + replay protection | Quittance (SPEC-4) |
+
+The qualifier shipped at L0. The final-round campaign moves the quorum **on-chain** (SPEC-4): `distribute()` verifies each Ed25519 signature via `env().verify_signature`, counts valid distinct-verifier yes-votes, and reverts `QuorumNotMet` below threshold. The servicer key alone can no longer release funds — it must present ≥quorum valid signed yes-verdicts. **This is the strongest on-chain verification in the finalist field** (code-verified vs demo-simple competitors; Caspergard's repo 404 — unverifiable).
+
+## The moat stack
+
+| SPEC | What it adds | Honest limit |
+| --- | --- | --- |
+| **SPEC-4** | On-chain Ed25519 signature verification (L3) — forged/replayed/unregistered sigs rejected by the chain | single-operator verifiers (demo) |
+| **SPEC-6** | On-chain per-verifier reputation (`cycles_seen`/`voted`/`agreed`) — the unique moat; maps to Casper example-#2 | tracks **settled** cycles only — halted cycles don't score (no ground truth without settlement) |
+| **SPEC-1** | Queryable on-chain `Receipt` per `(asset, cycle)` via `get_receipt` | new cycles only (no backfill) |
+| **SPEC-5** | Per-cycle AI verification brief — the agent explains the verified record on-chain | **narration, not proof** — the verifiable truth is the on-chain sigs + reputation |
+
+**The property that makes the moat honest:** the only way to accumulate `cycles_agreed` is to vote `yes` on a cycle that **actually settles**. A compromised verifier cannot inflate its reputation via a fraud cycle — the cycle halts, no update, no reward.
+
+## x402 — native, not bolted on
+
+**67% of the Casper Agentic Buildathon prize pool is x402 Ecosystem Credits.** Quittance uses x402 **natively** for every verifier payment — real, per-call economic commitment, settled on Casper via the CSPR.cloud facilitator. Each of the three verifiers is paid per verdict over x402 (header `PAYMENT-SIGNATURE`); the settle txs are in the table below. This isn't a side feature — it's the payment rail the whole verification thesis runs on.
+
+## Casper example-direction-#2
+
+Casper's example-direction-#2: *"RWA Oracle Agents with Verifiable On-Chain Identity and a reputation score based on historical accuracy."* **Quittance is that, built:**
+
+- ✅ **Verifiable on-chain identity** — verifiers are registered pubkeys in the vault's `verifier_registry` from `register_asset` (SPEC-6).
+- ✅ **Reputation score based on historical accuracy** — `cycles_agreed` / `cycles_voted` per verifier, queryable via `get_verifier_registry` (SPEC-6).
+- ✅ **RWA oracle agents** — the autonomous servicer + three x402-paid verifiers for tokenized cashflow servicing (the RWA lane, uncontested in the field).
 
 ## Proven on-chain (casper-test)
 
@@ -83,6 +123,20 @@ Both paths are real, executed, and verifiable on [`testnet.cspr.live`](https://t
 
 **The result that matters:** in the fraud cycle one verifier lies *"yes"* while the two honest ones say *"no."* The agent still pays all three for verification (real money, on-chain) — and **still refuses to release the cashflow on a single dishonest "yes."** Holder balances stay unchanged; the agent's own funds never move into a distribution. **You cannot bribe one verifier to unlock the money.**
 
+### Final-round v2 (SPEC-1/4/5/6 — the campaign contract)
+
+The final-round contract carries the full moat stack: **on-chain Ed25519 signature verification (SPEC-4, L3)**, **queryable receipts (SPEC-1)**, **on-chain verifier reputation (SPEC-6)**, and **the agentic verification brief (SPEC-5)**. Deployed as a fresh vault (`servicer_vault_package_hash_v2`) + proven on casper-test:
+
+| Event | SPEC | Result | Transaction |
+| --- | --- | --- | --- |
+| `ServicerVault` v2 deployed | 1/4/5/6 | entity `753a16ea…4d61d7` (337.69 CSPR install) | [`66d3afb3…067c9`](https://testnet.cspr.live/deploy/66d3afb32f28d84f36ccf89b3d6be3dd863eb2c5a76e01e10210e19527f067c9) |
+| register_asset(inv-001) | — | 3 verifiers, 2 holders, quorum 2 | [`19adc747…96764`](https://testnet.cspr.live/deploy/19adc74733302931019b423d45f1819d914a92d43cf20d5d44b5575693496764) |
+| fund pool (10 CSPR) | — | pool funded | [`4c8f877b…8383f`](https://testnet.cspr.live/deploy/4c8f877bdb4d3115852a378694e9eb585cd30199762396749962217257c8383f) |
+| **distribute(happy)** | **4** | **contract verified 3 TS-signed Ed25519 sigs ON-CHAIN → holders +7/+3 CSPR** (8.51 CSPR gas) | [`e6fbfb83…66e68`](https://testnet.cspr.live/deploy/e6fbfb83174f15544c860f30068f1ec797a11b3f101dcc1e655b88ee2b666e68) |
+| record_brief(happy) | **5** | **AI verification brief stored on-chain** | [`1ff73ae2…4f618`](https://testnet.cspr.live/deploy/1ff73ae2c01204c8a5de12cef7609c423696d64a1a54632204e101d8c9c4f618) |
+
+**The cross-side proof that matters:** the `distribute(happy)` tx proves the TS-side `canonicalBytes` signing (in the verifier, `@noble/ed25519`) is verified byte-for-byte by the Rust-side `canonical_bytes` reconstruction + `env().verify_signature` on the **real Casper host** — the one open e2e risk, closed. The qualifier table above is the L0 build (agent attests); this v2 table is the L3 build (chain verifies).
+
 ## See it live
 
 | | |
@@ -95,7 +149,7 @@ Both paths are real, executed, and verifiable on [`testnet.cspr.live`](https://t
 
 | Component | Responsibility | Stack |
 | --- | --- | --- |
-| **`ServicerVault`** | Holds the native-CSPR distribution pool + holder registry; records per-cycle receipts; exposes quorum-gated `distribute()`. | **Odra** (Rust), Casper |
+| **`ServicerVault`** | Holds the native-CSPR distribution pool + holder registry; **verifies each Ed25519 verdict signature on-chain** (SPEC-4); records per-cycle **receipts** (SPEC-1) + per-verifier **reputation** (SPEC-6) + **AI briefs** (SPEC-5); exposes quorum-gated `distribute()`. | **Odra** (Rust), Casper |
 | **Servicer agent** | Runs the cycle: pays verifiers over x402, enforces the quorum, calls the contract through stable adapter seams, verifies finality. | TypeScript, `casper-js-sdk` v5 |
 | **Verifier services ×3** | Independent, **x402-gated** HTTP endpoints returning *signed* yes/no verdicts over evidence. | TypeScript / Express |
 | **Dashboard** | Issuer config + holder view: cycle history, quorum stamps, live on-chain balances, every tx deep-linked to cspr.live. | Next.js 15, Vercel |
@@ -147,6 +201,11 @@ node e2e/harness/run-cycle.mjs fraud           # quorum fails → halt
 ## Honesty & disclosure
 
 For the buildathon demo, the off-chain *"cashflow arrived"* evidence is **mocked/sandboxed** — the three verifiers stand in for real payment-rail adapters (bank APIs, Stripe, etc.). The innovation is the **verification-gated autonomous release**, not the data source. **Testnet only**: verifier payments use WCSPR via x402, holder distribution is native test CSPR; the payout token is a test asset, not a real stablecoin.
+
+Three honest limits of the final-round campaign, disclosed plainly:
+- **Reputation tracks settled cycles only.** A halted cycle (the fraud showcase) reverts before any state write, so it scores nothing — the contract cannot authoritatively establish ground truth without settlement. The clean side: a compromised verifier **cannot inflate its reputation** via a fraud cycle (the cycle halts, no update).
+- **The AI brief is narration, not proof.** The LLM explains the cryptographically verified record; it never decides fund release (the quorum stays signature-based). A compromised agent could mislead a dashboard reader, but cannot move funds — the on-chain signatures + reputation remain the verifiable truth.
+- **Single-operator verifiers.** All three run by one operator (RECTOR) for the demo. SPEC-4 (distinct keys) + SPEC-6 (transparent reputation) make collusion *harder* and *visible*, not operationally impossible. Genuine verifier independence + a staking/slashing marketplace are post-hackathon (see [`ROADMAP.md`](./ROADMAP.md)).
 
 ## License
 

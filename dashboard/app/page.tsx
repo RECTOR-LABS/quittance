@@ -1,6 +1,7 @@
-import { getAsset, getCycles } from '@/lib/data';
+import { getAsset, getCycles, distributionReceiptForCycle, verifierRegistryFromCommitted } from '@/lib/data';
 import { AssetHeader } from '@/components/AssetHeader';
 import { VerifierBadge } from '@/components/VerifierBadge';
+import { VerifierReputationCard } from '@/components/VerifierReputationCard';
 import { CycleCard } from '@/components/CycleCard';
 
 export const revalidate = 15;
@@ -8,6 +9,7 @@ export const revalidate = 15;
 export default function IssuerPage() {
   const asset = getAsset();
   const cycles = getCycles();
+  const reputation = verifierRegistryFromCommitted(asset, cycles);
   return (
     <div className="space-y-10">
       <section>
@@ -16,6 +18,15 @@ export default function IssuerPage() {
           Funds reach holders only after an independent quorum confirms the cashflow arrived.
         </h1>
         <p className="mt-2 font-mono text-xs uppercase tracking-[0.18em] text-muted">verify, not attest</p>
+        <p className="mt-3 max-w-2xl font-sans text-sm text-muted">
+          The contract verifies the quorum <b className="text-foreground">on-chain</b> · verifiers carry{' '}
+          <b className="text-foreground">on-chain reputation</b> · the AI explains — the chain decides.
+        </p>
+        <p className="mt-2 max-w-2xl font-sans text-xs text-muted">
+          Verifiers are paid per-call over{' '}
+          <a href="https://x402.org" className="text-accent underline" target="_blank" rel="noopener noreferrer">x402</a>,
+          settled on Casper — real economic commitment for every verdict.
+        </p>
       </section>
 
       <AssetHeader asset={asset} />
@@ -41,6 +52,20 @@ export default function IssuerPage() {
                 <VerifierBadge key={v.label} verifier={v} />
               ))}
             </div>
+            <div className="mt-4 border-t border-edge pt-3">
+              <h3 className="mb-2 font-mono text-xs uppercase tracking-[0.18em] text-muted">
+                Reputation <span className="text-accent">(SPEC-6)</span>
+              </h3>
+              <p className="mb-2 font-sans text-[11px] text-muted">
+                On-chain track record: cycles seen, voted, agreed. Settled cycles only
+                — halted cycles don&apos;t score (no ground truth without settlement).
+              </p>
+              <div className="grid gap-2">
+                {reputation.map((r) => (
+                  <VerifierReputationCard key={r.signer} reputation={r} />
+                ))}
+              </div>
+            </div>
           </div>
         </div>
       </section>
@@ -52,7 +77,11 @@ export default function IssuerPage() {
         </p>
         <div className="grid gap-4 lg:grid-cols-2">
           {cycles.map((c) => (
-            <CycleCard key={c.cycleId} cycle={c} />
+            <CycleCard
+              key={c.cycleId}
+              cycle={c}
+              receipt={c.status === 'distributed' ? distributionReceiptForCycle(c, asset, cycles) : undefined}
+            />
           ))}
         </div>
       </section>

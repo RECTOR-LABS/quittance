@@ -26,6 +26,11 @@ const AGENT_DIST    = resolve(__dirname, "../../agent/dist/index.js");
 
 const { CasperVerifierClient, CasperJsChainClient } = await import(ADAPTERS_DIST);
 const { runCycle } = await import(AGENT_DIST);
+// SPEC-5: the agent's runCycle now requires a briefClient. The smoke uses the
+// deterministic FakeBriefClient (no LLM network call) — it records a real brief
+// on-chain via record_brief, proving the SPEC-5 path end-to-end.
+const CORE_DIST = resolve(__dirname, "../../packages/core/dist/index.js");
+const { FakeBriefClient } = await import(CORE_DIST);
 
 // --------------------------------- config ---------------------------------
 const RPC_URL  = process.env.CASPER_NODE_URL ?? "https://node.testnet.casper.network/rpc";
@@ -103,7 +108,7 @@ if (!arg || arg === "--dry") {
   console.log("  verifiers  :", cfg.endpoints.map((e) => `${e.id}@${e.url}`).join(", "));
   console.log("\nrunning cycle…");
 
-  const outcome = await runCycle({ verifierClient, chainClient }, cfg, arg);
+  const outcome = await runCycle({ verifierClient, chainClient, briefClient: new FakeBriefClient() }, cfg, arg);
 
   console.log("\n=== CycleOutcome ===");
   console.log(j(outcome));

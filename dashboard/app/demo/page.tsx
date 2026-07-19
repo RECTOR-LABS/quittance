@@ -1,4 +1,6 @@
 import Link from 'next/link';
+import { getAsset, getCycles, distributionReceiptForCycle, verifierRegistryFromCommitted } from '@/lib/data';
+import { TryTheFraudDemo } from '@/components/TryTheFraudDemo';
 
 export const metadata = {
   title: 'Quittance — demo',
@@ -7,17 +9,29 @@ export const metadata = {
 };
 
 export default function DemoPage() {
+  const asset = getAsset();
+  const cycles = getCycles();
+  const happy = cycles.find((c) => c.cycleId === 'happy')!;
+  const fraud = cycles.find((c) => c.cycleId === 'fraud')!;
+  const happyReceipt = distributionReceiptForCycle(happy, asset, cycles);
+  const reputation = verifierRegistryFromCommitted(asset, cycles);
+
   return (
     <div className="space-y-8">
       <section>
-        <div className="font-mono text-[10px] uppercase tracking-[0.25em] text-accent">Demo · ~2 min</div>
+        <div className="font-mono text-[10px] uppercase tracking-[0.25em] text-accent">Demo · interactive + ~2 min video</div>
         <h1 className="mt-2 max-w-2xl font-sans text-2xl font-semibold leading-snug sm:text-3xl">
           Watch the agent refuse to release funds on a single dishonest &ldquo;yes.&rdquo;
         </h1>
         <p className="mt-2 font-mono text-xs uppercase tracking-[0.18em] text-muted">verify, not attest</p>
       </section>
 
-      <video
+      <TryTheFraudDemo asset={asset} fraud={fraud} happy={happy} happyReceipt={happyReceipt} reputation={reputation} />
+
+      <section>
+        <div className="font-mono text-[10px] uppercase tracking-[0.22em] text-muted">The recorded walkthrough</div>
+        <h2 className="mt-1 font-sans text-lg font-semibold">Both cycles, proven live on casper-test</h2>
+        <video
         className="aspect-video w-full rounded-xl border border-edge bg-black"
         controls
         preload="metadata"
@@ -38,6 +52,7 @@ export default function DemoPage() {
         <span className="text-no">Fraud cycle:</span> one verifier lies &ldquo;yes,&rdquo; the quorum fails → the
         agent halts, pays nothing, and holder balances stay untouched. Both proven live on casper-test.
       </p>
+      </section>
 
       <section className="grid gap-3 sm:grid-cols-3">
         <Link
