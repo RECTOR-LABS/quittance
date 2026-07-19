@@ -7,6 +7,9 @@ export type { PaymentClient, PaymentRequest, SettlementReceipt } from "./payment
 // ChainClient interface
 export type { ChainClient, DeployResult } from "./chain-client.js";
 
+// BriefClient interface (SPEC-5 — agentic verification brief seam)
+export type { BriefClient, BriefInput, BriefReputationSnapshot } from "./brief-client.js";
+
 // Signing / verification trust primitive
 export { canonicalBytes, canonicalHash, signVerdict, verifyVerdict } from "./sign.js";
 
@@ -20,4 +23,4 @@ export type {
   FakeChainClientOptions,
   FakePaymentClientOptions,
 } from "./fakes.js";
-export { FakeChainClient, FakePaymentClient } from "./fakes.js";
+export { FakeChainClient, FakePaymentClient, FakeBriefClient, fakeBriefText } from "./fakes.js";

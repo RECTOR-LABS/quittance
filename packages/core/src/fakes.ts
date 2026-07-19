@@ -1,5 +1,6 @@
 import type { ChainClient, DeployResult } from "./chain-client.js";
 import type { PaymentClient, PaymentRequest, SettlementReceipt } from "./payment-client.js";
+import type { BriefClient, BriefInput } from "./brief-client.js";
 
 // ---------------------------------------------------------------------------
 // FakePaymentClient
@@ -185,4 +186,47 @@ export class FakeChainClient implements ChainClient {
   private nextTxHash(label: string): string {
     return `fake-tx-${label}-${++this.counter}`;
   }
+}
+
+// ---------------------------------------------------------------------------
+// FakeBriefClient (SPEC-5)
+// ---------------------------------------------------------------------------
+
+/**
+ * In-memory `BriefClient` for downstream tests (agent, e2e). Returns a
+ * deterministic, templated verification brief from the cycle inputs — no
+ * network, no LLM. The template is structured so tests can assert on the
+ * cycle's verdicts + outcome without coupling to LLM prose.
+ *
+ * Introspection: `calls` records every `brief()` invocation (the `BriefInput`),
+ * so tests can assert the LLM seam was (or was not) called (e.g. a halted
+ * cycle must not call it).
+ */
+export class FakeBriefClient implements BriefClient {
+  /** Every `brief()` invocation. */
+  readonly calls: BriefInput[] = [];
+  private readonly forcedError: Error | undefined;
+
+  constructor(options: { forcedError?: Error } = {}) {
+    this.forcedError = options.forcedError;
+  }
+
+  brief(input: BriefInput): Promise<string> {
+    this.calls.push(input);
+    if (this.forcedError) throw this.forcedError;
+    return Promise.resolve(fakeBriefText(input));
+  }
+}
+
+/**
+ * Deterministic brief text for a cycle (the fake's narration). Structured so a
+ * test can assert the verdicts + outcome were interpreted correctly.
+ */
+export function fakeBriefText(input: BriefInput): string {
+  const yes = input.verdicts.filter((v) => v.verdict.verdict === "yes").length;
+  const no = input.verdicts.filter((v) => v.verdict.verdict === "no").length;
+  const outcome = input.distributed
+    ? `quorum met (${yes} yes / ${no} no); the contract verified each signature on-chain and released funds pro-rata.`
+    : `quorum not met (${yes} yes / ${no} no); the contract halted and released nothing.`;
+  return `Cycle ${input.cycleId} on ${input.assetId}: ${outcome}`;
 }

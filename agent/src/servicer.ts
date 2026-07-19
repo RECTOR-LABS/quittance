@@ -1,5 +1,5 @@
 import { reachQuorum } from "@quittance/core";
-import type { ChainClient, SettlementReceipt, SignedVerdict } from "@quittance/core";
+import type { BriefClient, ChainClient, SettlementReceipt, SignedVerdict } from "@quittance/core";
 import type { VerifyQuery } from "@quittance/verifier";
 import type { VerifierClient, VerifierEndpoint, VerifierResponse } from "./verifier-client.js";
 
@@ -15,6 +15,9 @@ export interface AssetServicingConfig {
 export interface ServicerDeps {
   verifierClient: VerifierClient;
   chainClient: ChainClient;
+  /** Produces the per-cycle AI verification brief (SPEC-5). The LLM only
+   *  narrates — it never decides fund release (the quorum stays deterministic). */
+  briefClient: BriefClient;
 }
 
 export type HaltReason =
@@ -27,6 +30,10 @@ export interface CycleOutcome {
   status: "distributed" | "halted";
   reason?: HaltReason;
   distributeTx?: string;
+  /** The AI verification brief recorded on-chain for a settled cycle (SPEC-5).
+   *  Undefined for halted cycles (no settlement to anchor a brief to) or when
+   *  the LLM call failed post-settle (best-effort — the cycle still settles). */
+  brief?: string;
   receipts: SettlementReceipt[];
   verdicts: SignedVerdict[];
   /** Errors from verifier queries that threw after retries. Empty on full success. */
@@ -183,9 +190,38 @@ export async function runCycle(
     },
   );
 
+  // ---------------------------------------------------------------------------
+  // Step 5b (SPEC-5): produce + record the AI verification brief. Best-effort —
+  // the cycle has already settled (funds moved correctly per the cryptographic
+  // gate); an LLM or record failure does NOT change the outcome. The brief is
+  // agent-attested narration, not proof. Halted cycles never reach here.
+  // ---------------------------------------------------------------------------
+  let brief: string | undefined;
+  try {
+    brief = await deps.briefClient.brief({
+      assetId: cfg.assetId,
+      cycleId,
+      verdicts,
+      distributed: true,
+      // The live receipt read (reputation_snapshot) wires at the bundled deploy;
+      // until then the brief narrates from the verdicts + outcome alone.
+      reputationSnapshot: [],
+    });
+    await chainClient.callEntrypoint(cfg.vaultHash, "record_brief", {
+      asset_id: cfg.assetId,
+      cycle_id: cycleId,
+      brief,
+    });
+  } catch {
+    // Best-effort: a failed brief/record leaves the cycle settled; `brief`
+    // stays undefined so the caller knows none was recorded.
+    brief = undefined;
+  }
+
   return {
     status: "distributed",
     distributeTx: deployResult.txHash,
+    brief,
     receipts,
     verdicts,
     errors,
