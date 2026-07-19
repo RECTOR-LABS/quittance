@@ -1,0 +1,9 @@
+{
+  "inv-001:happy": {
+    "assetId": "inv-001",
+    "cycleId": "happy",
+    "expectedAmount": "1000000000000",
+    "observedAmount": "1000000000000",
+    "reference": "INV-001"
+  }
+}
