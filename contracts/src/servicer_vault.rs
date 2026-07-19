@@ -12,6 +12,13 @@
 //! listing trusted pubkeys — it must present ≥`quorum` valid, registered,
 //! distinct-verifier **signed** yes-verdicts. "Verify, not attest" is now a
 //! protocol property, not a demo claim.
+//!
+//! ABI note: `distribute` takes the per-verifier evidence as **parallel arrays**
+//! (`signers`, `verdicts`, `signatures`, `observed_amounts`, `sources`) rather
+//! than a `Vec<SignedVerdict>` struct. The verification logic is identical
+//! (zip + verify each), but parallel arrays of primitives encode cleanly
+//! through the SDK's `CLList` (Odra structs would require hand-serialized
+//! heterogeneous byte layouts the SDK has no generic builder for).
 
 use odra::casper_types::bytesrepr::Bytes;
 use odra::casper_types::{PublicKey, U256, U512};
@@ -70,22 +77,8 @@ pub enum Error {
     /// `register_asset` called with a non-empty holder list whose weights sum
     /// to zero (no holder can ever receive a share).
     ZeroTotalWeight = 8,
-}
-
-/// A verifier's signed yes/no verdict, presented to [`ServicerVault::distribute`]
-/// for on-chain Ed25519 verification (SPEC-4). The 5 fields reconstruct the
-/// canonical signed bytes (see [`canonical_bytes`]); `signature` is a Casper
-/// `Signature` serialized as `[0x01, <64 bytes>]`; `signer` must be a registered
-/// verifier pubkey.
-#[odra::odra_type]
-pub struct SignedVerdict {
-    pub asset_id: String,
-    pub cycle_id: String,
-    pub verdict: bool,
-    pub observed_amount: String,
-    pub source: String,
-    pub signature: Bytes,
-    pub signer: PublicKey,
+    /// The parallel evidence arrays disagree in length (SPEC-4).
+    EvidenceArityMismatch = 9,
 }
 
 /// A cryptographically **verified** signature record, stored in the [`Receipt`]
@@ -163,10 +156,6 @@ impl ServicerVault {
         if holders.is_empty() {
             self.env().revert(Error::EmptyHolders);
         }
-        // Reject an all-zero-weight registry up front: a non-empty holder list
-        // whose weights sum to zero can never distribute (every pro-rata share
-        // would be `pool * 0 / 0`). Failing fast here makes the divide-by-zero
-        // path in `distribute` unreachable by construction.
         let total_weight = holders
             .iter()
             .fold(U256::zero(), |acc, (_, weight)| acc + *weight);
@@ -223,19 +212,38 @@ impl ServicerVault {
 
     /// Release the pool to holders pro-rata, once per `(asset_id, cycle_id)`.
     ///
-    /// The quorum is enforced **on-chain** (SPEC-4): each presented
-    /// [`SignedVerdict`] is verified via `env().verify_signature` over
-    /// [`canonical_bytes`]; only valid, registered, bound, distinct-verifier
-    /// **yes** signatures count toward `quorum`. The servicer key alone cannot
-    /// release funds — it must present ≥`quorum` valid signed yes-verdicts.
-    /// The verified signer set + their signatures are recorded in the
+    /// The quorum is enforced **on-chain** (SPEC-4): each per-verifier evidence
+    /// tuple (signers[i], verdicts[i], signatures[i], observed_amounts[i],
+    /// sources[i]) is verified via `env().verify_signature` over
+    /// [`canonical_bytes`] built from the distribute's `(asset_id, cycle_id)`
+    /// plus the tuple's verdict/observed/source. Only valid, registered, bound,
+    /// distinct-verifier **yes** signatures count toward `quorum`. The servicer
+    /// key alone cannot release funds — it must present ≥`quorum` valid signed
+    /// yes-verdicts. The verified signer set + signatures are recorded in the
     /// [`Distributed`] event and the stored [`Receipt`].
+    ///
+    /// The five evidence arrays must be the same length (one entry per
+    /// verifier); else [`Error::EvidenceArityMismatch`].
     pub fn distribute(
         &mut self,
         asset_id: String,
         cycle_id: String,
-        signed_verdicts: Vec<SignedVerdict>,
+        signers: Vec<PublicKey>,
+        verdicts: Vec<bool>,
+        signatures: Vec<Bytes>,
+        observed_amounts: Vec<String>,
+        sources: Vec<String>,
     ) {
+        // 0. Evidence arrays must be parallel (one entry per verifier).
+        let n = signers.len();
+        if verdicts.len() != n
+            || signatures.len() != n
+            || observed_amounts.len() != n
+            || sources.len() != n
+        {
+            self.env().revert(Error::EvidenceArityMismatch);
+        }
+
         // 1. Asset must be registered.
         let cfg = self
             .assets
@@ -251,10 +259,12 @@ impl ServicerVault {
         // 3. Quorum gate — ON-CHAIN SIGNATURE VERIFICATION (SPEC-4).
         //
         // TRUST BOUNDARY (post-SPEC-4): the contract verifies each Ed25519
-        // signature over `canonical_bytes(sv)` via `env().verify_signature`.
-        // A verdict counts toward the quorum only if it is:
-        //   (a) BOUND — `asset_id`/`cycle_id` match this distribute call (replay
-        //       protection L4 — a cycle-c1 signature cannot release cycle-c2).
+        // signature over `canonical_bytes(asset_id, cycle_id, verdict, observed,
+        // source)` via `env().verify_signature`. A verdict counts toward the
+        // quorum only if it is:
+        //   (a) BOUND — the canonical message embeds `asset_id`/`cycle_id` from
+        //       THIS distribute call, so a cycle-c1 signature cannot release
+        //       cycle-c2 (replay protection L4).
         //   (b) REGISTERED — `signer` is in the asset's verifier registry.
         //   (c) DISTINCT — one vote per pubkey (anti-collusion by construction).
         //   (d) VALID — the signature cryptographically verifies on-chain.
@@ -265,34 +275,38 @@ impl ServicerVault {
         // quorum, `distribute` reverts `QuorumNotMet` and nothing moves.
         let mut verified_signers: Vec<PublicKey> = Vec::new();
         let mut verified_sigs: Vec<VerifierSignature> = Vec::new();
-        for sv in signed_verdicts.iter() {
-            // (a) BIND — verdict must be for this exact (asset, cycle).
-            if sv.asset_id != asset_id || sv.cycle_id != cycle_id {
-                continue;
-            }
+        for i in 0..n {
+            let signer = &signers[i];
             // (b) REGISTERED.
-            if !cfg.verifiers.contains(&sv.signer) {
+            if !cfg.verifiers.contains(signer) {
                 continue;
             }
             // (c) DISTINCT — one verified vote per pubkey.
-            if verified_signers.contains(&sv.signer) {
+            if verified_signers.contains(signer) {
                 continue;
             }
-            // (d) VALID — Ed25519 verify on-chain over the canonical bytes.
-            let message = canonical_bytes(sv);
+            // (d) VALID — Ed25519 verify on-chain over the canonical bytes
+            //     bound to this (asset_id, cycle_id) + the tuple's fields.
+            let message = canonical_bytes(
+                &asset_id,
+                &cycle_id,
+                verdicts[i],
+                &observed_amounts[i],
+                &sources[i],
+            );
             if !self
                 .env()
-                .verify_signature(&message, &sv.signature, &sv.signer)
+                .verify_signature(&message, &signatures[i], signer)
             {
                 continue;
             }
             // (e) YES — only affirmative verdicts count toward the quorum.
-            if sv.verdict {
-                verified_signers.push(sv.signer.clone());
+            if verdicts[i] {
+                verified_signers.push(signer.clone());
                 verified_sigs.push(VerifierSignature {
-                    signer: sv.signer.clone(),
+                    signer: signer.clone(),
                     verdict: true,
-                    signature: sv.signature.clone(),
+                    signature: signatures[i].clone(),
                 });
             }
         }
@@ -311,20 +325,12 @@ impl ServicerVault {
             .holders
             .iter()
             .fold(U512::zero(), |acc, (_, weight)| acc + to_u512(weight));
-        // `total_weight` is non-zero by construction: `register_asset` rejects a
-        // zero-sum holder list with `ZeroTotalWeight`, so any stored config has
-        // a positive total. This guard is defense-in-depth and is unreachable;
-        // it reverts the correctly-labeled error rather than the misleading
-        // `EmptyHolders`.
         if total_weight.is_zero() {
             self.env().revert(Error::ZeroTotalWeight);
         }
 
         let mut paid = U512::zero();
         for (holder, weight) in cfg.holders.iter() {
-            // `pool * weight` panics-reverts on U512 overflow (no silent wrap);
-            // integer division floors, so the running `paid` never exceeds
-            // `pool`. Dust (the remainder) is retained in the pool below.
             let amount = pool * to_u512(weight) / total_weight;
             if amount.is_zero() {
                 continue;
@@ -369,7 +375,7 @@ impl ServicerVault {
     }
 }
 
-/// Reconstruct the canonical signed bytes for a [`SignedVerdict`] (SPEC-4 §4).
+/// Reconstruct the canonical signed bytes for one verdict (SPEC-4 §4).
 ///
 /// Layout (u16 big-endian length prefixes; verdict is a single byte):
 ///   `[u16 asset_id.len] asset_id_utf8`
@@ -382,13 +388,19 @@ impl ServicerVault {
 /// and this on-chain reconstruction agree byte-for-byte — no fragile
 /// cross-language string-matching. Ed25519 signs the raw bytes directly
 /// (no host hash call needed).
-fn canonical_bytes(sv: &SignedVerdict) -> Bytes {
+fn canonical_bytes(
+    asset_id: &str,
+    cycle_id: &str,
+    verdict: bool,
+    observed_amount: &str,
+    source: &str,
+) -> Bytes {
     let mut out: Vec<u8> = Vec::new();
-    push_str(&mut out, &sv.asset_id);
-    push_str(&mut out, &sv.cycle_id);
-    out.push(if sv.verdict { 1 } else { 0 });
-    push_str(&mut out, &sv.observed_amount);
-    push_str(&mut out, &sv.source);
+    push_str(&mut out, asset_id);
+    push_str(&mut out, cycle_id);
+    out.push(if verdict { 1 } else { 0 });
+    push_str(&mut out, observed_amount);
+    push_str(&mut out, source);
     Bytes::from(out)
 }
 
@@ -423,51 +435,60 @@ mod tests {
     // ---- helpers -------------------------------------------------------------
 
     /// Deterministic, distinct ed25519 verifier key from a single-byte seed.
-    /// Derived from a SecretKey so the public key is always a valid curve point.
     fn vk(seed: u8) -> PublicKey {
         let sk = SecretKey::ed25519_from_bytes([seed; 32])
             .expect("32-byte ed25519 seed is always valid");
         PublicKey::from(&sk)
     }
 
-    /// Build a [`SignedVerdict`] whose Ed25519 signature is valid over
-    /// [`canonical_bytes`] under the seed-derived key — i.e. exactly what a
-    /// real off-chain verifier (`core/sign.ts :: signVerdict`) produces, so the
-    /// on-chain `verify_signature` accepts it. The signature is a Casper
-    /// `Signature` serialized as `[0x01, <64 bytes>]`.
-    fn signed_verdict(
+    /// Sign one verdict with the seed-derived key; returns `(signer_pubkey,
+    /// signature_bytes)` where the signature is a valid Casper `Signature`
+    /// (`[0x01, <64 bytes>]`) over `canonical_bytes(asset, cycle, verdict,
+    /// observed, source)` — exactly what a real off-chain verifier
+    /// (`core/sign.ts :: signVerdict`) produces, so the on-chain
+    /// `verify_signature` accepts it.
+    fn sign_one(
         seed: u8,
         asset_id: &str,
         cycle_id: &str,
         verdict: bool,
-        observed_amount: &str,
+        observed: &str,
         source: &str,
-    ) -> SignedVerdict {
+    ) -> (PublicKey, Bytes) {
         let sk = SecretKey::ed25519_from_bytes([seed; 32])
             .expect("32-byte ed25519 seed is always valid");
         let pk = PublicKey::from(&sk);
-        let unsigned = SignedVerdict {
-            asset_id: asset_id.to_string(),
-            cycle_id: cycle_id.to_string(),
-            verdict,
-            observed_amount: observed_amount.to_string(),
-            source: source.to_string(),
-            signature: Bytes::from(Vec::new()),
-            signer: pk.clone(),
-        };
-        let message = canonical_bytes(&unsigned);
+        let message = canonical_bytes(asset_id, cycle_id, verdict, observed, source);
         let signature = ed25519_sign(message.as_slice(), &sk, &pk);
         let signature_bytes = Bytes::from(signature.to_bytes().expect("signature serializes"));
-        SignedVerdict {
-            signature: signature_bytes,
-            ..unsigned
+        (pk, signature_bytes)
+    }
+
+    /// Build the five parallel evidence arrays for `distribute` from a list of
+    /// `(seed, verdict, observed, source)` specs — each verdict signed by its
+    /// seed key over `(asset_id, cycle_id, ...)`.
+    fn signed_arrays(
+        asset_id: &str,
+        cycle_id: &str,
+        specs: &[(u8, bool, &str, &str)],
+    ) -> (Vec<PublicKey>, Vec<bool>, Vec<Bytes>, Vec<String>, Vec<String>) {
+        let mut signers = Vec::new();
+        let mut verdicts = Vec::new();
+        let mut signatures = Vec::new();
+        let mut observed_amounts = Vec::new();
+        let mut sources = Vec::new();
+        for &(seed, verdict, observed, source) in specs {
+            let (pk, sig) = sign_one(seed, asset_id, cycle_id, verdict, observed, source);
+            signers.push(pk);
+            verdicts.push(verdict);
+            signatures.push(sig);
+            observed_amounts.push(observed.to_string());
+            sources.push(source.to_string());
         }
+        (signers, verdicts, signatures, observed_amounts, sources)
     }
 
     /// Assert a `try_*` result reverted with the given contract error.
-    ///
-    /// Compares on the on-chain error **code** (the variant discriminant),
-    /// independent of the human-readable message the host attaches.
     fn assert_revert<T: core::fmt::Debug>(res: OdraResult<T>, expected: Error) {
         let expected_code = expected as u16;
         match res {
@@ -483,9 +504,8 @@ mod tests {
     }
 
     /// A standard 3-verifier, 2-holder, quorum-2 asset funded with 1000 motes.
-    /// Uses the caller's `env` (OdraVM envs are per-call — a helper that created
-    /// its own would deploy the vault in a different env than the one the test
-    /// inspects). Returns `(vault, alice, bob)` ready for a distribute call.
+    /// Uses the caller's `env` (OdraVM envs are per-call). Returns
+    /// `(vault, alice, bob)` ready for a distribute call.
     fn funded_vault(env: &HostEnv) -> (ServicerVaultHostRef, Address, Address) {
         let token = env.get_account(0);
         let alice = env.get_account(1);
@@ -502,6 +522,19 @@ mod tests {
             .with_tokens(U512::from(1000))
             .fund("inv-1".to_string());
         (vault, alice, bob)
+    }
+
+    /// The standard 3-verifier happy evidence (vk1+vk2+vk3 all YES) for cycle c1.
+    fn happy_evidence() -> (Vec<PublicKey>, Vec<bool>, Vec<Bytes>, Vec<String>, Vec<String>) {
+        signed_arrays(
+            "inv-1",
+            "c1",
+            &[
+                (1, true, "1000", "bank-api"),
+                (2, true, "1000", "stripe"),
+                (3, true, "1000", "ledger"),
+            ],
+        )
     }
 
     // ---- registration / funding (unchanged behavior) -----------------------
@@ -577,7 +610,7 @@ mod tests {
             token,
             vec![(alice, U256::from(1))],
             vec![vk(1), vk(2)],
-            3, // 3 > 2 verifiers
+            3,
         );
         assert_revert(res, Error::InvalidQuorum);
     }
@@ -666,14 +699,15 @@ mod tests {
         let alice_before = env.balance_of(&alice);
         let bob_before = env.balance_of(&bob);
 
+        let (signers, verdicts, sigs, obs, src) = happy_evidence();
         vault.distribute(
             "inv-1".to_string(),
             "c1".to_string(),
-            vec![
-                signed_verdict(1, "inv-1", "c1", true, "1000", "bank-api"),
-                signed_verdict(2, "inv-1", "c1", true, "1000", "stripe"),
-                signed_verdict(3, "inv-1", "c1", true, "1000", "ledger"),
-            ],
+            signers,
+            verdicts,
+            sigs,
+            obs,
+            src,
         );
 
         assert_eq!(env.balance_of(&alice) - alice_before, U512::from(700));
@@ -699,16 +733,19 @@ mod tests {
     #[test]
     fn distribute_exact_quorum_distributes() {
         let env = odra_test::env();
-        let (mut vault, alice, bob) = funded_vault(&env);
+        let (mut vault, alice, _bob) = funded_vault(&env);
         let alice_before = env.balance_of(&alice);
 
+        let (signers, verdicts, sigs, obs, src) =
+            signed_arrays("inv-1", "c1", &[(1, true, "1000", "bank-api"), (2, true, "1000", "stripe")]);
         vault.distribute(
             "inv-1".to_string(),
             "c1".to_string(),
-            vec![
-                signed_verdict(1, "inv-1", "c1", true, "1000", "bank-api"),
-                signed_verdict(2, "inv-1", "c1", true, "1000", "stripe"),
-            ],
+            signers,
+            verdicts,
+            sigs,
+            obs,
+            src,
         );
         assert_eq!(env.balance_of(&alice) - alice_before, U512::from(700));
     }
@@ -721,10 +758,16 @@ mod tests {
         let alice_before = env.balance_of(&alice);
         let bob_before = env.balance_of(&bob);
 
+        let (signers, verdicts, sigs, obs, src) =
+            signed_arrays("inv-1", "c1", &[(1, true, "1000", "bank-api")]); // 1 < quorum 2
         let res = vault.try_distribute(
             "inv-1".to_string(),
             "c1".to_string(),
-            vec![signed_verdict(1, "inv-1", "c1", true, "1000", "bank-api")], // 1 < quorum 2
+            signers,
+            verdicts,
+            sigs,
+            obs,
+            src,
         );
         assert_revert(res, Error::QuorumNotMet);
 
@@ -737,34 +780,26 @@ mod tests {
             .is_none());
     }
 
-    // V4. FORGED SIGNATURE — sig doesn't match the pubkey/message -> not
-    // counted; if it drops below quorum -> QuorumNotMet (the security proof).
+    // V4. FORGED SIGNATURE — sig doesn't match the signer pubkey -> not counted;
+    // below quorum -> QuorumNotMet (the security proof).
     #[test]
     fn distribute_rejects_forged_signature() {
         let env = odra_test::env();
         let (mut vault, alice, _bob) = funded_vault(&env);
         let alice_before = env.balance_of(&alice);
 
-        // A real verdict from vk(1)...
-        let real = signed_verdict(1, "inv-1", "c1", true, "1000", "bank-api");
-        // ...but a FORGERY: sign with vk(2)'s key yet claim vk(1) as signer, so
-        // the on-chain verify against vk(1) fails.
-        let sk2 = SecretKey::ed25519_from_bytes([2u8; 32]).unwrap();
-        let pk2 = PublicKey::from(&sk2);
-        let forged = SignedVerdict {
-            signer: vk(1), // claim a different signer than the key that signed
-            signature: Bytes::from(
-                ed25519_sign(canonical_bytes(&real).as_slice(), &sk2, &pk2)
-                    .to_bytes()
-                    .expect("sig"),
-            ),
-            ..real
-        };
-
+        // Sign the c1 verdict with vk(2)'s key, but claim vk(1) as the signer,
+        // so the on-chain verify against vk(1) fails.
+        let (forged_pk_unused, forged_sig) = sign_one(2, "inv-1", "c1", true, "1000", "bank-api");
+        let _ = forged_pk_unused;
         let res = vault.try_distribute(
             "inv-1".to_string(),
             "c1".to_string(),
-            vec![forged], // 0 valid -> below quorum
+            vec![vk(1)], // claim vk(1) as signer
+            vec![true],
+            vec![forged_sig], // but the sig was made by vk(2)
+            vec!["1000".to_string()],
+            vec!["bank-api".to_string()],
         );
         assert_revert(res, Error::QuorumNotMet);
         assert_eq!(env.balance_of(&alice), alice_before);
@@ -779,17 +814,17 @@ mod tests {
         let alice_before = env.balance_of(&alice);
 
         // Sign a verdict for cycle "c1", but call distribute for cycle "c2".
-        let c1_sig = signed_verdict(1, "inv-1", "c1", true, "1000", "bank-api");
-        let c2_sig = SignedVerdict {
-            cycle_id: "c2".to_string(),
-            ..c1_sig
-        };
-        // Also a second verifier signed for c2 properly — if c1-replay counted,
-        // this would distribute; it must NOT (the replayed sig is bound to c1).
+        // The contract rebuilds the canonical message with c2, so the c1-sig
+        // does not verify -> rejected.
+        let (replay_pk, replay_sig) = sign_one(1, "inv-1", "c1", true, "1000", "bank-api");
         let res = vault.try_distribute(
             "inv-1".to_string(),
-            "c2".to_string(),
-            vec![c2_sig], // bound to c1, presented for c2 -> skipped; 0 valid
+            "c2".to_string(), // different cycle
+            vec![replay_pk],
+            vec![true],
+            vec![replay_sig],
+            vec!["1000".to_string()],
+            vec!["bank-api".to_string()],
         );
         assert_revert(res, Error::QuorumNotMet);
         assert_eq!(env.balance_of(&alice), alice_before);
@@ -803,10 +838,16 @@ mod tests {
         let alice_before = env.balance_of(&alice);
 
         // vk(99) is not in the registered set {vk(1), vk(2), vk(3)}.
+        let (signers, verdicts, sigs, obs, src) =
+            signed_arrays("inv-1", "c1", &[(99, true, "1000", "bank-api")]);
         let res = vault.try_distribute(
             "inv-1".to_string(),
             "c1".to_string(),
-            vec![signed_verdict(99, "inv-1", "c1", true, "1000", "bank-api")],
+            signers,
+            verdicts,
+            sigs,
+            obs,
+            src,
         );
         assert_revert(res, Error::QuorumNotMet);
         assert_eq!(env.balance_of(&alice), alice_before);
@@ -819,26 +860,37 @@ mod tests {
         let env = odra_test::env();
         let (mut vault, _alice, _bob) = funded_vault(&env);
 
-        let sv = signed_verdict(1, "inv-1", "c1", true, "1000", "bank-api");
+        let (s1, v1, sig1, o1, sr1) = signed_arrays("inv-1", "c1", &[(1, true, "1000", "bank-api")]);
+        // Submit the same (signer, sig) twice — one distinct signer, twice.
         let res = vault.try_distribute(
             "inv-1".to_string(),
             "c1".to_string(),
-            vec![sv.clone(), sv], // one distinct signer, twice
+            vec![s1[0].clone(), s1[0].clone()],
+            vec![v1[0], v1[0]],
+            vec![sig1[0].clone(), sig1[0].clone()],
+            vec![o1[0].clone(), o1[0].clone()],
+            vec![sr1[0].clone(), sr1[0].clone()],
         );
         assert_revert(res, Error::QuorumNotMet);
         assert_eq!(vault.pool_of("inv-1".to_string()), U512::from(1000));
     }
 
-    // V8. NO BACK DOOR — the old trusted-`signers` call is gone (compile-time:
-    // `distribute` now requires `signed_verdicts`). A no-signature call (empty
-    // vec) reverts QuorumNotMet.
+    // V8. NO BACK DOOR — empty evidence reverts QuorumNotMet.
     #[test]
     fn distribute_with_no_signatures_reverts() {
         let env = odra_test::env();
         let (mut vault, alice, _bob) = funded_vault(&env);
         let alice_before = env.balance_of(&alice);
 
-        let res = vault.try_distribute("inv-1".to_string(), "c1".to_string(), vec![]);
+        let res = vault.try_distribute(
+            "inv-1".to_string(),
+            "c1".to_string(),
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+        );
         assert_revert(res, Error::QuorumNotMet);
         assert_eq!(env.balance_of(&alice), alice_before);
     }
@@ -851,13 +903,19 @@ mod tests {
         let alice_before = env.balance_of(&alice);
 
         // One yes + one validly-signed no: only the yes counts (1 < quorum 2).
+        let (signers, verdicts, sigs, obs, src) = signed_arrays(
+            "inv-1",
+            "c1",
+            &[(1, true, "1000", "bank-api"), (2, false, "0", "bank-api")],
+        );
         let res = vault.try_distribute(
             "inv-1".to_string(),
             "c1".to_string(),
-            vec![
-                signed_verdict(1, "inv-1", "c1", true, "1000", "bank-api"),
-                signed_verdict(2, "inv-1", "c1", false, "0", "bank-api"),
-            ],
+            signers,
+            verdicts,
+            sigs,
+            obs,
+            src,
         );
         assert_revert(res, Error::QuorumNotMet);
         assert_eq!(env.balance_of(&alice), alice_before);
@@ -869,27 +927,17 @@ mod tests {
         let env = odra_test::env();
         let (mut vault, alice, bob) = funded_vault(&env);
 
-        vault.distribute(
-            "inv-1".to_string(),
-            "c1".to_string(),
-            vec![
-                signed_verdict(1, "inv-1", "c1", true, "1000", "bank-api"),
-                signed_verdict(2, "inv-1", "c1", true, "1000", "stripe"),
-            ],
-        );
+        let (s, v, sg, o, sr) =
+            signed_arrays("inv-1", "c1", &[(1, true, "1000", "bank-api"), (2, true, "1000", "stripe")]);
+        vault.distribute("inv-1".to_string(), "c1".to_string(), s, v, sg, o, sr);
 
         let alice_after_first = env.balance_of(&alice);
         let bob_after_first = env.balance_of(&bob);
 
         // Second call, same (asset, cycle) -> AlreadyDistributed, no payment.
-        let res = vault.try_distribute(
-            "inv-1".to_string(),
-            "c1".to_string(),
-            vec![
-                signed_verdict(1, "inv-1", "c1", true, "1000", "bank-api"),
-                signed_verdict(2, "inv-1", "c1", true, "1000", "stripe"),
-            ],
-        );
+        let (s2, v2, sg2, o2, sr2) =
+            signed_arrays("inv-1", "c1", &[(1, true, "1000", "bank-api"), (2, true, "1000", "stripe")]);
+        let res = vault.try_distribute("inv-1".to_string(), "c1".to_string(), s2, v2, sg2, o2, sr2);
         assert_revert(res, Error::AlreadyDistributed);
         assert_eq!(env.balance_of(&alice), alice_after_first);
         assert_eq!(env.balance_of(&bob), bob_after_first);
@@ -898,14 +946,9 @@ mod tests {
         vault
             .with_tokens(U512::from(1000))
             .fund("inv-1".to_string());
-        vault.distribute(
-            "inv-1".to_string(),
-            "c2".to_string(),
-            vec![
-                signed_verdict(1, "inv-1", "c2", true, "1000", "bank-api"),
-                signed_verdict(2, "inv-1", "c2", true, "1000", "stripe"),
-            ],
-        );
+        let (s3, v3, sg3, o3, sr3) =
+            signed_arrays("inv-1", "c2", &[(1, true, "1000", "bank-api"), (2, true, "1000", "stripe")]);
+        vault.distribute("inv-1".to_string(), "c2".to_string(), s3, v3, sg3, o3, sr3);
         assert_eq!(env.balance_of(&alice) - alice_after_first, U512::from(700));
         assert_eq!(env.balance_of(&bob) - bob_after_first, U512::from(300));
     }
@@ -931,14 +974,9 @@ mod tests {
         let alice_before = env.balance_of(&alice);
         let bob_before = env.balance_of(&bob);
 
-        let res = vault.try_distribute(
-            "inv-1".to_string(),
-            "c1".to_string(),
-            vec![
-                signed_verdict(1, "inv-1", "c1", true, "1000", "bank-api"),
-                signed_verdict(2, "inv-1", "c1", true, "1000", "stripe"),
-            ],
-        );
+        let (s, v, sg, o, sr) =
+            signed_arrays("inv-1", "c1", &[(1, true, "1000", "bank-api"), (2, true, "1000", "stripe")]);
+        let res = vault.try_distribute("inv-1".to_string(), "c1".to_string(), s, v, sg, o, sr);
         assert_revert(res, Error::InsufficientPool);
         assert_eq!(env.balance_of(&alice), alice_before);
         assert_eq!(env.balance_of(&bob), bob_before);
@@ -969,14 +1007,9 @@ mod tests {
         let b_before = env.balance_of(&b);
         let c_before = env.balance_of(&c);
 
-        vault.distribute(
-            "inv-1".to_string(),
-            "c1".to_string(),
-            vec![
-                signed_verdict(1, "inv-1", "c1", true, "1000", "bank-api"),
-                signed_verdict(2, "inv-1", "c1", true, "1000", "stripe"),
-            ],
-        );
+        let (s, v, sg, o, sr) =
+            signed_arrays("inv-1", "c1", &[(1, true, "1000", "bank-api"), (2, true, "1000", "stripe")]);
+        vault.distribute("inv-1".to_string(), "c1".to_string(), s, v, sg, o, sr);
 
         assert_eq!(env.balance_of(&a) - a_before, U512::from(333));
         assert_eq!(env.balance_of(&b) - b_before, U512::from(333));
@@ -1009,14 +1042,9 @@ mod tests {
         let env = odra_test::env();
         let (mut vault, _alice, _bob) = funded_vault(&env);
 
-        vault.distribute(
-            "inv-1".to_string(),
-            "c1".to_string(),
-            vec![
-                signed_verdict(1, "inv-1", "c1", true, "1000", "bank-api"),
-                signed_verdict(2, "inv-1", "c1", true, "1000", "stripe"),
-            ],
-        );
+        let (s, v, sg, o, sr) =
+            signed_arrays("inv-1", "c1", &[(1, true, "1000", "bank-api"), (2, true, "1000", "stripe")]);
+        vault.distribute("inv-1".to_string(), "c1".to_string(), s, v, sg, o, sr);
 
         let receipt = vault
             .get_receipt("inv-1".to_string(), "c1".to_string())
@@ -1057,14 +1085,9 @@ mod tests {
             .with_tokens(U512::from(1000))
             .fund("inv-1".to_string());
 
-        vault.distribute(
-            "inv-1".to_string(),
-            "c1".to_string(),
-            vec![
-                signed_verdict(1, "inv-1", "c1", true, "1000", "bank-api"),
-                signed_verdict(2, "inv-1", "c1", true, "1000", "stripe"),
-            ],
-        );
+        let (s, v, sg, o, sr) =
+            signed_arrays("inv-1", "c1", &[(1, true, "1000", "bank-api"), (2, true, "1000", "stripe")]);
+        vault.distribute("inv-1".to_string(), "c1".to_string(), s, v, sg, o, sr);
 
         let receipt = vault
             .get_receipt("inv-1".to_string(), "c1".to_string())
@@ -1081,11 +1104,8 @@ mod tests {
         let env = odra_test::env();
         let (mut vault, _alice, _bob) = funded_vault(&env);
 
-        let res = vault.try_distribute(
-            "inv-1".to_string(),
-            "c1".to_string(),
-            vec![signed_verdict(1, "inv-1", "c1", true, "1000", "bank-api")], // 1 < 2
-        );
+        let (s, v, sg, o, sr) = signed_arrays("inv-1", "c1", &[(1, true, "1000", "bank-api")]); // 1 < 2
+        let res = vault.try_distribute("inv-1".to_string(), "c1".to_string(), s, v, sg, o, sr);
         assert_revert(res, Error::QuorumNotMet);
 
         // Fraud path wrote nothing.
@@ -1100,27 +1120,17 @@ mod tests {
         let env = odra_test::env();
         let (mut vault, _alice, _bob) = funded_vault(&env);
 
-        vault.distribute(
-            "inv-1".to_string(),
-            "c1".to_string(),
-            vec![
-                signed_verdict(1, "inv-1", "c1", true, "1000", "bank-api"),
-                signed_verdict(2, "inv-1", "c1", true, "1000", "stripe"),
-            ],
-        );
+        let (s, v, sg, o, sr) =
+            signed_arrays("inv-1", "c1", &[(1, true, "1000", "bank-api"), (2, true, "1000", "stripe")]);
+        vault.distribute("inv-1".to_string(), "c1".to_string(), s, v, sg, o, sr);
         let first = vault
             .get_receipt("inv-1".to_string(), "c1".to_string())
             .expect("receipt");
 
         // Second call, same cycle -> AlreadyDistributed (before any receipt write).
-        let res = vault.try_distribute(
-            "inv-1".to_string(),
-            "c1".to_string(),
-            vec![
-                signed_verdict(3, "inv-1", "c1", true, "1000", "ledger"), // different signer
-                signed_verdict(2, "inv-1", "c1", true, "1000", "stripe"),
-            ],
-        );
+        let (s2, v2, sg2, o2, sr2) =
+            signed_arrays("inv-1", "c1", &[(3, true, "1000", "ledger"), (2, true, "1000", "stripe")]);
+        let res = vault.try_distribute("inv-1".to_string(), "c1".to_string(), s2, v2, sg2, o2, sr2);
         assert_revert(res, Error::AlreadyDistributed);
 
         let after = vault
@@ -1137,25 +1147,15 @@ mod tests {
         let env = odra_test::env();
         let (mut vault, _alice, _bob) = funded_vault(&env);
 
-        vault.distribute(
-            "inv-1".to_string(),
-            "c1".to_string(),
-            vec![
-                signed_verdict(1, "inv-1", "c1", true, "1000", "bank-api"),
-                signed_verdict(2, "inv-1", "c1", true, "1000", "stripe"),
-            ],
-        );
+        let (s, v, sg, o, sr) =
+            signed_arrays("inv-1", "c1", &[(1, true, "1000", "bank-api"), (2, true, "1000", "stripe")]);
+        vault.distribute("inv-1".to_string(), "c1".to_string(), s, v, sg, o, sr);
         vault
             .with_tokens(U512::from(1000))
             .fund("inv-1".to_string());
-        vault.distribute(
-            "inv-1".to_string(),
-            "c2".to_string(),
-            vec![
-                signed_verdict(2, "inv-1", "c2", true, "1000", "stripe"),
-                signed_verdict(3, "inv-1", "c2", true, "1000", "ledger"),
-            ],
-        );
+        let (s2, v2, sg2, o2, sr2) =
+            signed_arrays("inv-1", "c2", &[(2, true, "1000", "stripe"), (3, true, "1000", "ledger")]);
+        vault.distribute("inv-1".to_string(), "c2".to_string(), s2, v2, sg2, o2, sr2);
 
         let r1 = vault
             .get_receipt("inv-1".to_string(), "c1".to_string())
