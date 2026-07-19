@@ -45,6 +45,10 @@ export function DistributionReceiptCard({ receipt }: { receipt: DistributionRece
           <dt className="text-muted">signers</dt>
           <dd className="break-words">{receipt.signers.join(', ') || '—'}</dd>
         </div>
+        <div className="col-span-2">
+          <dt className="text-muted">verified</dt>
+          <dd className="text-yes">{receipt.signers.length} signature(s) verified on-chain (SPEC-4)</dd>
+        </div>
       </dl>
       {receipt.verifyTx && (
         <div className="mt-2 font-mono text-xs text-muted">
