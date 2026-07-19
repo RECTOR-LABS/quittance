@@ -93,6 +93,7 @@ The qualifier shipped at L0. The final-round campaign moves the quorum **on-chai
 | **SPEC-6** | On-chain per-verifier reputation (`cycles_seen`/`voted`/`agreed`) — the unique moat; maps to Casper example-#2 | tracks **settled** cycles only — halted cycles don't score (no ground truth without settlement) |
 | **SPEC-1** | Queryable on-chain `Receipt` per `(asset, cycle)` via `get_receipt` | new cycles only (no backfill) |
 | **SPEC-5** | Per-cycle AI verification brief — the agent explains the verified record on-chain | **narration, not proof** — the verifiable truth is the on-chain sigs + reputation |
+| **SPEC-2** | Real payment-rail adapter — one verifier reads **Stripe test mode** instead of a fixture | one of three verifiers; live e2e pending a test-mode key |
 
 **The property that makes the moat honest:** the only way to accumulate `cycles_agreed` is to vote `yes` on a cycle that **actually settles**. A compromised verifier cannot inflate its reputation via a fraud cycle — the cycle halts, no update, no reward.
 
@@ -200,7 +201,7 @@ node e2e/harness/run-cycle.mjs fraud           # quorum fails → halt
 
 ## Honesty & disclosure
 
-For the buildathon demo, the off-chain *"cashflow arrived"* evidence is **mocked/sandboxed** — the three verifiers stand in for real payment-rail adapters (bank APIs, Stripe, etc.). The innovation is the **verification-gated autonomous release**, not the data source. **Testnet only**: verifier payments use WCSPR via x402, holder distribution is native test CSPR; the payout token is a test asset, not a real stablecoin.
+For the buildathon demo, the off-chain *"cashflow arrived"* evidence is **mocked/sandboxed by default** — the three verifiers stand in for real payment-rail adapters (bank APIs, Stripe, etc.). The innovation is the **verification-gated autonomous release**, not the data source. **SPEC-2 (real-rail adapter)** upgrades *one* verifier to read **Stripe test mode** (a real external API, `sk_test_...` — no real money) instead of a fixture: the verifier calls Stripe's `payment_intents` endpoint, confirms `status: succeeded`, and binds the verdict to the PI's `metadata.reference`. Conservative failure — any non-confirming path (API error, non-succeeded status, missing reference) → the verifier votes `no` (funds withheld). The codebase ships this adapter with full unit-test coverage (injectable `fetch`); the default demo config keeps all three verifiers on mocked fixtures for reproducibility, and the live e2e against Stripe test mode runs with a test-mode key. **Testnet only**: verifier payments use WCSPR via x402, holder distribution is native test CSPR; the payout token is a test asset, not a real stablecoin.
 
 Three honest limits of the final-round campaign, disclosed plainly:
 - **Reputation tracks settled cycles only.** A halted cycle (the fraud showcase) reverts before any state write, so it scores nothing — the contract cannot authoritatively establish ground truth without settlement. The clean side: a compromised verifier **cannot inflate its reputation** via a fraud cycle (the cycle halts, no update).

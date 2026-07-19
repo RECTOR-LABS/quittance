@@ -1,7 +1,12 @@
 import { fileCashflowSource } from "./cashflow-source.js";
+import {
+  loadStripePaymentIndex,
+  stripeCashflowSource,
+} from "./stripe-cashflow-source.js";
 import { createVerifierApp } from "./server.js";
 import type { VerifierPaymentConfig } from "./server.js";
 import type { VerifierConfig } from "./verifier.js";
+import type { CashflowSource } from "./verdict.js";
 
 // ---------------------------------------------------------------------------
 // Runnable entrypoint for a single verifier instance.
@@ -39,12 +44,34 @@ function optionalPositiveInt(name: string): number | undefined {
   return value;
 }
 
+function buildSource(): CashflowSource {
+  const kind = (process.env.VERIFIER_SOURCE ?? "file").trim();
+  if (kind === "file") {
+    return fileCashflowSource(requireEnv("VERIFIER_EVIDENCE_PATH"));
+  }
+  if (kind === "stripe") {
+    // SPEC-2: one verifier reads a REAL payment rail (Stripe test mode) instead
+    // of a local fixture. The index tells this source *which* PaymentIntent to
+    // check; the *payment status*, *amount*, and *reference* all come from
+    // Stripe. Conservative failure: any non-confirming path -> null -> "no".
+    return stripeCashflowSource({
+      apiKey: requireEnv("STRIPE_API_KEY"),
+      paymentIndex: loadStripePaymentIndex(
+        requireEnv("STRIPE_PAYMENT_INDEX_PATH"),
+      ),
+    });
+  }
+  throw new Error(
+    `unknown VERIFIER_SOURCE "${kind}" (expected "file" or "stripe")`,
+  );
+}
+
 function main(): void {
   const label = requireEnv("VERIFIER_LABEL");
   const port = requirePort("VERIFIER_PORT");
 
   const verifier: VerifierConfig = {
-    source: fileCashflowSource(requireEnv("VERIFIER_EVIDENCE_PATH")),
+    source: buildSource(),
     signingKeyHex: requireEnv("VERIFIER_SIGNING_KEY_HEX"),
     label,
   };
