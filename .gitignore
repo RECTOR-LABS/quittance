@@ -30,3 +30,8 @@ coverage/
 
 # Claude Code local scratch (worktrees, settings) — never commit
 .claude/
+
+# Agent skills — local dev tooling, re-installable via `npx skills add`
+.agents/
+skills-lock.json
+.firecrawl/
