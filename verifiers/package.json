@@ -20,7 +20,7 @@
   "dependencies": {
     "@make-software/casper-x402": "1.0.0",
     "@quittance/core": "workspace:*",
-    "@x402/core": "2.15.0",
+    "@x402/core": "2.19.0",
     "express": "^4.21.2",
     "express-rate-limit": "^8.6.0"
   },
